@@ -119,6 +119,7 @@ import java.util.UUID
 }
 
 @Composable fun AboutView(onBack: () -> Unit) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
     RTPage {
         RTBrand(); RTHero(badge = "关于", title = "RunTick · 燃刻", subtitle = "为每一次认真训练而生")
         RTCard(title = "让每一次出发，有迹可循") {

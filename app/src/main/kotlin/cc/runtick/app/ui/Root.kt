@@ -143,7 +143,7 @@ fun RootView(model: AppModel) {
                     }
                     2 -> if (user != null && model.api != null) SoloStartView(model.api!!, user!!) else LoginView(model, onHelp = { showHelp = true })
                     else -> if (user != null) {
-                        ProfileView(model = model, user = user!!, onOpenHistory = { showProfileHistory = true }, onAbout = { showAbout = true }, onHelp = { showHelp = true })
+                        ProfileView(model = model, user = user!!, onOpenHistory = { showProfileHistory = true }, onAbout = { showAbout = true }, onSoloHistory = { destination = 2 }, onHelp = { showHelp = true })
                     } else LoginView(model, onHelp = { showHelp = true })
                 }
             }
@@ -405,7 +405,7 @@ fun GuideView(
 
 /** 个人中心。 */
 @Composable
-fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout: () -> Unit = {}, onHelp: () -> Unit = {}) {
+fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout: () -> Unit = {}, onSoloHistory: () -> Unit = {}, onHelp: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val loading by model.loadingFlow.collectAsState()
 
@@ -439,6 +439,7 @@ fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout:
             Spacer(Modifier.weight(1f))
             Icon(Icons.AutoMirrored.Filled.ArrowRight, contentDescription = null, tint = RT.ink, modifier = Modifier.size(18.dp))
         }
+        RTButton(onClick = onSoloHistory) { RTButtonInkText("单人起跑记录") }
         RTButton(onClick = onAbout) { RTButtonInkText("关于 RunTick") }
         RTButton(
             onClick = { scope.launch { model.perform { model.logout() } } },
