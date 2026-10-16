@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -59,6 +60,8 @@ import java.util.UUID
         history = if (offset == 0) data else data.copy(records = history.records + data.records)
     } catch (e: Exception) { error = e.message ?: "读取失败" } }
     fun stop() { task?.cancel(); audio.stop(); motion.end(); running = false }
+    val view = LocalView.current
+    DisposableEffect(running) { val previous = view.keepScreenOn; if (running) view.keepScreenOn = true; onDispose { view.keepScreenOn = previous } }
     val lifecycle = LocalLifecycleOwner.current
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) stop() }
@@ -97,13 +100,14 @@ import java.util.UUID
                 }, secondary = false) { RTButtonText("确认设置，开始发令") }
             } else {
                 Text(cue, fontSize = 34.sp, color = RT.ink)
-                result?.let { Text(reactionText(it.reactionMs, it.reactionStatus), color = RT.ink) }
+                result?.let { if (it.reactionStatus == "false_start") RTChip("抢跑", lemon = true); Text(reactionText(it.reactionMs, it.reactionStatus), color = RT.ink) }
                 RTButton(onClick = { stop() }) { RTButtonInkText("结束本轮") }
             }
         }
         RTCard(title = "单人起跑记录") {
             Text("不计入距离成绩或 PB。未检测到移动不会记作 0 ms。", fontSize = 12.sp, color = RT.muted)
             history.records.forEach { record ->
+                if (record.reactionStatus == "false_start") RTChip("抢跑", lemon = true)
                 Text(reactionText(record.reactionMs, record.reactionStatus), color = RT.ink)
                 Text(Date(record.createdAt.toLong()).toString(), fontSize = 12.sp, color = RT.muted)
             }

@@ -7,8 +7,8 @@ import kotlin.math.abs
 @Serializable data class SoloRecord(val id: String, val createdAt: Double, val reactionMs: Double? = null, val reactionStatus: String)
 @Serializable data class SoloRecords(val records: List<SoloRecord> = emptyList(), val hasMore: Boolean = false)
 fun reactionText(ms: Double?, status: String?): String = when {
-    status == "false_start" && ms != null -> "抢跑 · ${"%.0f".format(ms)} ms（＜100 ms）"
-    status == "detected" && ms != null -> "起跑反应 ${"%.0f".format(ms)} ms"
+    status == "false_start" && ms != null -> "抢跑 · ${"%.1f".format(ms)} ms（＜100 ms）"
+    status == "detected" && ms != null -> "起跑反应 ${"%.1f".format(ms)} ms"
     else -> mapOf("disabled" to "未启用反应时检测", "timeout" to "未检测到移动", "unavailable" to "传感器不可用或未授权", "unstable" to "放置不稳定", "cancelled" to "检测已中断")[status] ?: "未记录反应时"
 }
 class MotionGate {

@@ -378,6 +378,7 @@ private fun RaceCard(
     )[race.status] ?: race.status
 
     RTCard(title = "本轮 · $statusTitle") {
+        if (race.reactionStatus == "false_start") RTChip("抢跑", lemon = true)
         if (race.reactionStatus != null) Text(cc.runtick.app.core.reactionText(race.reactionMs, race.reactionStatus), color = RT.ink)
         when {
             race.status == "completed" -> CompletedSection(model, race, raceRole, distance, onDistanceChange)

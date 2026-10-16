@@ -185,6 +185,7 @@ fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
                         current.records.forEach { record ->
                             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column {
+                                    if (record.reactionStatus == "false_start") RTChip("抢跑", lemon = true)
                                     Text(cc.runtick.app.core.reactionText(record.reactionMs, record.reactionStatus), fontSize = 12.sp, color = RT.muted)
                                     Text("${record.distance} 米", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = RT.ink)
                                     Text(
