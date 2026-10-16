@@ -9,7 +9,7 @@ import kotlin.math.abs
 fun reactionText(ms: Double?, status: String?): String = when {
     status == "false_start" && ms != null -> "抢跑 · ${"%.0f".format(ms)} ms（＜100 ms）"
     status == "detected" && ms != null -> "起跑反应 ${"%.0f".format(ms)} ms"
-    else -> mapOf("timeout" to "未检测到移动", "unavailable" to "传感器不可用或未授权", "unstable" to "放置不稳定", "cancelled" to "检测已中断")[status] ?: "未记录反应时"
+    else -> mapOf("disabled" to "未启用反应时检测", "timeout" to "未检测到移动", "unavailable" to "传感器不可用或未授权", "unstable" to "放置不稳定", "cancelled" to "检测已中断")[status] ?: "未记录反应时"
 }
 class MotionGate {
     var ready = false; private set

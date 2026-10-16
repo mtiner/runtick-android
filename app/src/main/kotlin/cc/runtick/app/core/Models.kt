@@ -71,7 +71,7 @@ data class HistoryRecord(
 
 /** 三段发令音的等待时间（秒）。 */
 @Serializable
-data class StageDelay(var random: Boolean, var min: Double, var max: Double, var enabled: Boolean = true) {
+data class StageDelay(var random: Boolean, var min: Double, var max: Double, var enabled: Boolean = true, var reactionEnabled: Boolean = false) {
     /** 上下限须有限且落在 0–30 秒，随机时上限不得小于下限。 */
     val valid: Boolean
         get() = min.isFinite() && max.isFinite() &&

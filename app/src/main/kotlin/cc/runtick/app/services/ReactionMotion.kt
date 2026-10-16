@@ -18,8 +18,9 @@ class ReactionMotion(context: Context) : SensorEventListener {
     private var callback: ((ReactionResult) -> Unit)? = null
     private var timeout: Job? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    suspend fun prepare() {
+    suspend fun prepare(enabled: Boolean = true) {
         stop(); gate = MotionGate(); received = false; preflight = "unavailable"; gyroAt = 0L
+        if (!enabled) { preflight = "disabled"; return }
         val acceleration = manager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION) ?: return
         val rotation = manager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return
         if (!manager.registerListener(this, rotation, 10000) || !manager.registerListener(this, acceleration, 10000)) { stop(); return }
@@ -49,5 +50,6 @@ class ReactionMotion(context: Context) : SensorEventListener {
         complete(ReactionResult(ms, if (ms < 100) "false_start" else "detected"))
     }
     private fun complete(value: ReactionResult) { val action = callback; stop(); action?.invoke(value) }
+    fun end(status: String = "cancelled") { if (callback != null) complete(ReactionResult(null, status)) else stop() }
     fun stop() { manager.unregisterListener(this); timeout?.cancel(); timeout = null; callback = null; gunAt = null }
 }

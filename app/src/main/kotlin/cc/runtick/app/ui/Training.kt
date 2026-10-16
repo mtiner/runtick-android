@@ -24,6 +24,11 @@ import java.util.UUID
 @Composable fun StageSettings(stages: List<StageDelay>, disabled: Boolean = false, onChange: (List<StageDelay>) -> Unit) {
     fun update(index: Int, stage: StageDelay) { onChange(stages.toMutableList().also { it[index] = stage }) }
     Row {
+        Text("检测起跑反应时", modifier = Modifier.weight(1f), color = RT.ink)
+        Switch(checked = stages[0].reactionEnabled, onCheckedChange = { update(0, stages[0].copy(reactionEnabled = it)) }, enabled = !disabled)
+    }
+    Text("有起跑器并固定手机后开启；三点式起跑可关闭，不影响发令或跑步成绩。", fontSize = 12.sp, color = RT.muted)
+    Row {
         Text("播放各就位口令", modifier = Modifier.weight(1f), color = RT.ink)
         Switch(checked = stages[0].enabled, onCheckedChange = { update(0, stages[0].copy(enabled = it)) }, enabled = !disabled)
     }
@@ -53,7 +58,7 @@ import java.util.UUID
         val data = api.request("/api/starts?offset=$offset") { AppJson.decodeFromJsonElement(SoloRecords.serializer(), it) }
         history = if (offset == 0) data else data.copy(records = history.records + data.records)
     } catch (e: Exception) { error = e.message ?: "读取失败" } }
-    fun stop() { task?.cancel(); audio.stop(); motion.stop(); running = false }
+    fun stop() { task?.cancel(); audio.stop(); motion.end(); running = false }
     val lifecycle = LocalLifecycleOwner.current
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) stop() }
@@ -74,7 +79,7 @@ import java.util.UUID
                         prefs.edit().putString("starter", AppJson.encodeToString(ListSerializer(StageDelay.serializer()), saved)).apply()
                         task = scope.launch {
                             try {
-                                motion.prepare()
+                                motion.prepare(saved[0].reactionEnabled)
                                 val (at, _) = audio.fire(MonotonicClock.now(), saved) { cue = it }
                                 val firedAt = System.currentTimeMillis()
                                 motion.gun(at) { value ->

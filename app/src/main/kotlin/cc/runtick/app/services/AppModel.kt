@@ -457,7 +457,7 @@ class RoomModel(
         runCatching { webSocket?.cancel() }
         webSocket = null
         connected = false
-        audio.stop(); reactionMotion.stop()
+        audio.stop(); reactionMotion.end(if (race?.status == "completed") "timeout" else "cancelled")
         interrupt()
     }
 
@@ -465,7 +465,7 @@ class RoomModel(
     fun interrupt() {
         pressed = false
         eventClock = null
-        audio.stop(); reactionMotion.stop()
+        audio.stop(); reactionMotion.end(if (race?.status == "completed") "timeout" else "cancelled")
         firing = false
         cue = null
     }
@@ -562,7 +562,7 @@ class RoomModel(
         firing = true
         try {
             cue = "请保持手机与起跑器稳定…"
-            reactionMotion.prepare()
+            reactionMotion.prepare(stages[0].reactionEnabled)
             val clicked = MonotonicClock.now()
             val (gunAt, extra) = audio.fire(clicked, stages) { cue = it }
             capture("start", gunAt, clockSnapshot, extra)
@@ -578,7 +578,7 @@ class RoomModel(
             throw e
         } catch (e: Throwable) {
             error = e.message ?: "发生未知错误"
-            audio.stop(); reactionMotion.stop()
+            audio.stop(); reactionMotion.end(if (race?.status == "completed") "timeout" else "cancelled")
         } finally {
             firing = false
         }
