@@ -32,6 +32,11 @@ class NavigationUiTest {
     @Before fun setup() {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.method == "POST" && request.path == "/api/rooms/1234/races/auto-plan/events") {
+                    val at = AppJson.parseToJsonElement(request.body.readUtf8()).jsonObject["at"]!!
+                    return MockResponse().setHeader("Content-Type", "application/json").setBody(
+                        """{"ok":true,"data":{"race":{"id":"auto-plan","status":"running","createdAt":1,"startUserId":2,"finishUserId":1,"startAt":$at}}}""")
+                }
                 if (request.method == "POST" && request.path == "/api/rooms/1234/races") {
                     val settings = AppJson.parseToJsonElement(request.body.readUtf8()).jsonObject["starterSettings"]!!
                     return MockResponse().setHeader("Content-Type", "application/json").setBody(
