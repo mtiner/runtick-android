@@ -14,14 +14,31 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = (project.findProperty("versionName") as String?) ?: "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        // CI 通过环境变量注入签名；本地无 release.keystore 时回退 debug 签名，保证 assembleRelease 始终可跑
+        if (System.getenv("RUNTICK_STORE_FILE") != null) {
+            create("release") {
+                storeFile = file(System.getenv("RUNTICK_STORE_FILE"))
+                storePassword = System.getenv("RUNTICK_STORE_PASSWORD")
+                keyAlias = System.getenv("RUNTICK_KEY_ALIAS")
+                keyPassword = System.getenv("RUNTICK_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (System.getenv("RUNTICK_STORE_FILE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {
