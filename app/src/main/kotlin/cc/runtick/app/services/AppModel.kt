@@ -477,6 +477,7 @@ class RoomModel(
         firing = false
         cue = null
         cueDeadline = null
+        _volumeWarning.value = false
     }
 
     /** 回前台：比赛进行中则重新校时，并让 WebSocket 立刻心跳一次。 */
@@ -575,7 +576,11 @@ class RoomModel(
     }
 
     /** 起点发令：校时新鲜且尚未有 start 事件时，播放三段音频并在枪声时刻 capture。 */
-    suspend fun fire() {
+    private val _volumeWarning = MutableStateFlow(false)
+    val volumeWarningFlow: StateFlow<Boolean> get() = _volumeWarning
+    fun dismissVolumeWarning() { _volumeWarning.value = false }
+
+    suspend fun fire(allowReducedVolume: Boolean = false) {
         val snapshot = clock
         val pass = snapshot != null && snapshot.fresh && !syncing && !firing &&
             race?.active == true && race?.startAt == null && pending == null && raceRole == "start"
@@ -586,6 +591,10 @@ class RoomModel(
             }
             return
         }
+        if (!allowReducedVolume && AudioReadiness.volumePercent(context) < 100) {
+            _volumeWarning.value = true; return
+        }
+        _volumeWarning.value = false
         val clockSnapshot = snapshot!!
         firing = true
         try {

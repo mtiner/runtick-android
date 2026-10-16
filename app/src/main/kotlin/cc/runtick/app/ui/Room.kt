@@ -141,7 +141,10 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
     val startVisible = raceRole == "start" && race?.isActive == true && dismissedRecording != race.id
     val showFinish = finishVisible && dismissedRecording != race?.id
     fun dismissRecording() { model.interrupt(); dismissedRecording = race?.id }
-    LaunchedEffect(startVisible, race?.id) { if (startVisible) model.autoFire() }
+    LaunchedEffect(startVisible, race?.id) {
+        if (race?.isActive == true) soundCheck = false
+        if (startVisible) model.autoFire()
+    }
 
     Box(Modifier.fillMaxSize()) {
         RTPage {
@@ -239,6 +242,10 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                     secondary = false,
                     enabled = ready && connected && clock != null && !syncing && !busy
                 ) { RTButtonText("开始记录") }
+            }
+
+            if (raceRole == "start" && race?.isActive == true && dismissedRecording == race.id) {
+                RTButton(onClick = { dismissedRecording = null }) { RTButtonInkText("返回记录页") }
             }
 
             // 待提交时间戳。
@@ -646,6 +653,12 @@ private fun FinishPad(model: RoomModel, loginId: String, leave: () -> Unit) {
 /** Full-screen starter presentation follows the same audio timeline as capture. */
 @Composable
 private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val firing by model.firingFlow.collectAsState()
+    val syncing by model.syncingFlow.collectAsState()
+    val pending by model.pendingFlow.collectAsState()
+    val race by model.raceFlow.collectAsState()
+    val volumeWarning by model.volumeWarningFlow.collectAsState()
     val cue by model.cueFlow.collectAsState()
     val deadline by model.cueDeadlineFlow.collectAsState()
     var now by remember { mutableStateOf(MonotonicClock.now()) }
@@ -663,7 +676,17 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
         Text(cue ?: "正在准备发令…", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = RT.ink, textAlign = TextAlign.Center)
         deadline?.let { Text(ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 96.sp, fontWeight = FontWeight.Bold, color = RT.ink) }
         Spacer(Modifier.weight(1f))
-        Text("保持 App 在前台 · 枪声响起后出发", color = RT.muted)
+        if (!firing && race?.startAt == null && pending == null && !volumeWarning) {
+            RTButton(onClick = { scope.launch { model.fire() } }, enabled = !syncing) { RTButtonInkText("重新发令") }
+        }
+        Text(if (race?.startAt == null) "保持 App 在前台 · 枪声响起后出发" else "枪声已发出 · 等待冲线", color = RT.muted)
     }
-    RTErrorAlert(model.errorFlow.collectAsState().value, enabled = true)
+    if (volumeWarning) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { model.dismissVolumeWarning() },
+        title = { Text("媒体音量未调至最大") },
+        text = { Text("建议调高媒体音量，以便听到口令和枪声。也可以按当前音量继续。") },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { scope.launch { model.fire(allowReducedVolume = true) } }) { Text("仍然开始") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = { model.dismissVolumeWarning() }) { Text("先调整音量") } }
+    )
+    RTErrorAlert(model.errorFlow.collectAsState().value, enabled = !volumeWarning)
 }
