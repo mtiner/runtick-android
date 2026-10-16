@@ -1,6 +1,6 @@
 # RunTick Android · 燃刻
 
-原生 Kotlin + Jetpack Compose 双端跑步计时客户端，从 iOS 版（`mtiner/runtick-ios`）1:1 迁移。最低支持 Android 8.0（API 26）。兼容 RunTick Cloudflare Worker API，可与 iOS / 网页端加入同一房间。没有使用 WebView。
+原生 Kotlin + Jetpack Compose 双端跑步计时客户端，与 iOS 版（`mtiner/runtick-ios`）共享训练流程和后端协议。最低支持 Android 8.0（API 26）。兼容 RunTick Cloudflare Worker API，可与 iOS / 网页端加入同一房间。没有使用 WebView。
 
 - 仓库：`mtiner/runtick-android`
 - 包名：`cc.runtick.app`（与 iOS TestFlight 身份一致）
@@ -10,7 +10,11 @@
 
 - 启动品牌页、首次引导（设备/声音准备检查）
 - 登录（首次使用的 ID 自动建号）、会话恢复、退出登录
-- 房间创建/加入（4 位数字码）、起点/终点角色（乐观更新）
+- 房间创建/加入（4 位数字码）、起点/终点角色立即乐观更新，可连续切换，后台按顺序提交
+- 任一端确认发令设置后，起点自动全屏发令并显示倒计时，终点进入全屏触控计时
+- 固定/随机发令间隔 0–10 秒整数；旧配置自动取整和限幅
+- 单人起跑记录入口位于起跑页及历史成绩页；关于/历史/单人记录支持系统返回
+- 主界面与全屏记录页使用系统安全区域，避让状态栏、刘海和开孔
 - HTTP 校时（20 次采样，uncertainty ≤ 250ms，120 秒有效）
 - 起点三段发令音频精确调度（各就位/预备/枪声，`AudioTimestamp` 硬件时钟）
 - 终点全屏触控计时（`MotionEvent` 单调时钟采样）、pending 时间戳持久化与断网重试
@@ -45,4 +49,4 @@ gradle wrapper --gradle-version 8.10.2
 
 ## 验证
 
-本机 `./gradlew test` 跑 Core 层 11 个移植用例；线上联调需两台设备（或一台真机 + 网页端 https://app.runtick.cc ）加入同一房间。
+`./gradlew testDebugUnitTest` 验证校时、角色并发切换、设置迁移等逻辑；`Android UI validation` 在带刘海的 Android 15 模拟器上验证返回层级、整数滑块及双端记录流程。线上联调仍需两台设备（或一台真机 + 网页端 https://app.runtick.cc ）加入同一房间。
