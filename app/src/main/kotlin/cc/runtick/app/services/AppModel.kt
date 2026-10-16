@@ -446,7 +446,9 @@ class RoomModel(
     fun update(value: Race) {
         val current = race
         if (current != null && !current.accepts(value)) return
-        race = value
+        val settings = value.starterSettings
+        if (current?.id != value.id && settings != null && settings.size == 3 && settings.all { it.valid }) stages = settings
+        race = if (current?.id == value.id && value.reactionStatus == null) value.copy(reactionMs = current.reactionMs, reactionStatus = current.reactionStatus) else value
         if (!value.active) interrupt()
     }
 
@@ -542,7 +544,8 @@ class RoomModel(
         val currentRace = race
         val path = if (action == "start") "/api/rooms/$code/races"
         else "/api/rooms/$code/races/${currentRace?.id ?: throw ClientError(0, null, "当前没有比赛")}/$action"
-        val data = api.request(path, "POST") { decodeRace(it) }
+        val body = if (action == "start") buildJsonObject { put("starterSettings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), stages)) } else null
+        val data = api.request(path, "POST", body) { decodeRace(it) }
         data?.let { update(it) }
     }
 

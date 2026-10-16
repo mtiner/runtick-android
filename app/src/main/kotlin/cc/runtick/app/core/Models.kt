@@ -34,6 +34,7 @@ data class Race(
     val uncertaintyMs: Double? = null,
     val startUserId: Long,
     val finishUserId: Long,
+    val starterSettings: List<StageDelay>? = null,
     val savedResult: SavedResult? = null,
     val reactionMs: Double? = null, val reactionStatus: String? = null,
 ) {
