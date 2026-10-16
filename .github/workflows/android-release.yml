@@ -52,3 +52,26 @@ jobs:
           files: |
             app/build/outputs/apk/release/app-release.apk
             app/build/outputs/bundle/release/app-release.aab
+
+      - name: Sync APK to download repo (official download link)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          APK: app/build/outputs/apk/release/app-release.apk
+          VER: ${{ github.ref_name }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq >/dev/null
+          B64=$(base64 -w0 "$APK")
+          SHA=$(curl -s -H "Authorization: Bearer $GH_PAT" \
+            "https://api.github.com/repos/mtiner/runtick-android-download/contents/public/runtick-latest.apk" | jq -r '.sha // empty')
+          for NAME in "runtick-latest.apk" "runtick-${VER#v}.apk"; do
+            S=$( [ "$NAME" = "runtick-latest.apk" ] && echo "$SHA" || echo "")
+            jq -n --arg msg "release: ${VER} ($NAME)" --arg sha "$S" --arg b64 "$B64" \
+              '{message:$msg, content:$b64, sha:(if $sha=="" then null else $sha end)}' > /tmp/body.json
+            CODE=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PUT \
+              -H "Authorization: Bearer $GH_PAT" -H "Accept: application/vnd.github+json" \
+              --data-binary @/tmp/body.json \
+              "https://api.github.com/repos/mtiner/runtick-android-download/contents/public/$NAME")
+            echo "$NAME -> HTTP $CODE"
+            [ "$CODE" = "201" ] || [ "$CODE" = "200" ] || { cat /tmp/resp.json; exit 1; }
+          done
