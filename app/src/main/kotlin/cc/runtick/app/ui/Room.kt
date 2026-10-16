@@ -262,6 +262,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                             "调高音量，使用手机扬声器；确认终点已进入触控区后再发令。",
                             fontSize = 14.sp, lineHeight = 20.sp, color = RT.ink
                         )
+                        StageSettings(stages = stages, onChange = { model.stages = it })
                         AudioPreparationCard()
                         RTButton(
                             onClick = {

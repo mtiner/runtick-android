@@ -86,7 +86,7 @@ import java.util.UUID
                                     result = value
                                     scope.launch {
                                         try {
-                                            val body = buildJsonObject { put("id", id); put("firedAt", firedAt); put("settings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), saved)); put("reactionMs", value.reactionMs?.let { JsonPrimitive(it) } ?: JsonNull); put("reactionStatus", value.reactionStatus) }
+                                            val body = buildJsonObject { put("id", id); put("firedAt", firedAt); put("athleteId", user.id); put("settings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), saved)); put("reactionMs", value.reactionMs?.let { JsonPrimitive(it) } ?: JsonNull); put("reactionStatus", value.reactionStatus) }
                                             TrainingSync.send(context, api, user.id, "/api/starts", body, id); load()
                                         } catch (e: Exception) { error = "记录已保留，联网后重试：${e.message}" }
                                     }
