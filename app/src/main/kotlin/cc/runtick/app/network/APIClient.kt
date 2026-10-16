@@ -73,10 +73,18 @@ class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Cont
         }
         val call = client.newCall(Request.Builder().url(url(path)).method(method, requestBody).build())
         val response = try {
-            suspendCancellableCoroutine<Response> { cont ->
+            suspendCancellableCoroutine<Pair<Int, String>> { cont ->
                 call.enqueue(object : Callback {
                     override fun onResponse(call: Call, response: Response) {
-                        if (cont.isActive) cont.resume(response)
+                        if (!cont.isActive) { response.close(); return }
+                        try {
+                            // OkHttp invokes this callback on its worker thread. Consume the
+                            // body here; resuming the caller first would read from the UI thread.
+                            val result = response.use { Pair(it.code, it.body?.string().orEmpty()) }
+                            if (cont.isActive) cont.resume(result)
+                        } catch (e: IOException) {
+                            if (cont.isActive) cont.resumeWithException(e)
+                        }
                     }
 
                     override fun onFailure(call: Call, e: IOException) {
@@ -88,17 +96,17 @@ class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Cont
         } catch (e: IOException) {
             throw networkError(e)
         }
-        response.use { resp ->
-            if (resp.code == 401) unauthorized?.invoke()
-            val text = resp.body?.string().orEmpty()
+        val (status, text) = response
+        if (status == 401) unauthorized?.invoke()
+        run {
             val envelope = runCatching { AppJson.parseToJsonElement(text).jsonObject }.getOrNull()
             val ok = envelope?.get("ok")?.jsonPrimitive?.booleanOrNull
             val data = envelope?.get("data")?.takeIf { it !is JsonNull }
             val errorPayload = envelope?.get("error")?.jsonObject
             val code = errorPayload?.get("code")?.jsonPrimitive?.contentOrNull
             val message = errorPayload?.get("message")?.jsonPrimitive?.contentOrNull
-            if (resp.code !in 200..299 || ok != true || data == null) {
-                throw ClientError(resp.code, code ?: "UNKNOWN", message ?: "请求失败，请稍后重试")
+            if (status !in 200..299 || ok != true || data == null) {
+                throw ClientError(status, code ?: "UNKNOWN", message ?: "请求失败，请稍后重试")
             }
             return decode(data)
         }

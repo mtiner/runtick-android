@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.content.Context
 import android.media.AudioManager
 import cc.runtick.app.services.RoomModel
+import kotlinx.coroutines.*
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 import android.view.WindowInsets
@@ -34,6 +35,10 @@ class NavigationUiTest {
     @Before fun setup() {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.path == "/slow-response") {
+                    return MockResponse().setHeader("Content-Type", "application/json")
+                        .setBody("""{"ok":true,"data":{"probe":true}}""").setBodyDelay(2, TimeUnit.SECONDS)
+                }
                 if (request.method == "POST" && request.path == "/api/rooms/1234/role") {
                     return MockResponse().setHeader("Content-Type", "application/json")
                         .setBody("""{"ok":true,"data":{}}""").setHeadersDelay(2, TimeUnit.SECONDS)
@@ -181,6 +186,28 @@ class NavigationUiTest {
             compose.waitUntil(10000) { !model.roleSaving }
             compose.runOnIdle { assertEquals("start", model.role) }
         } finally { compose.runOnIdle { model.stop() } }
+    }
+
+    @Test fun delayedResponseBodyDoesNotBlockInteractionOrFailOnMainThread() {
+        val api = APIClient(server.url("/").toString().trimEnd('/'))
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        var done = false
+        var failure: Throwable? = null
+        var clicks = 0
+        compose.setContent { RunTickTheme { RTSafeArea {
+            RTButton(onClick = { clicks++ }) { Text("响应期间仍可点击") }
+        } } }
+        try {
+            compose.runOnIdle { scope.launch {
+                try { api.request("/slow-response") { assertTrue(it.jsonObject["probe"]!!.jsonPrimitive.boolean) } }
+                catch (e: Throwable) { failure = e }
+                finally { done = true }
+            } }
+            compose.onNodeWithText("响应期间仍可点击").performClick()
+            compose.runOnIdle { assertEquals(1, clicks); assertFalse(done) }
+            compose.waitUntil(10000) { done }
+            compose.runOnIdle { assertNull(failure) }
+        } finally { scope.cancel() }
     }
 
 }
