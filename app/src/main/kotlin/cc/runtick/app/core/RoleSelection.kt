@@ -1,38 +1,30 @@
 package cc.runtick.app.core
 
-/**
- * 乐观角色选择：本地高亮与服务端权威状态分离。
- * 请求在途时保留乐观值，服务器确认或下一次房间状态到达后再收敛。
- */
+/** Latest tap wins immediately; serialize writes and ignore stale broadcasts. */
 class RoleSelection {
     var optimistic: String? = null
         private set
-    var saving: Boolean = false
+    var inFlight: String? = null
         private set
-
-    /** 请求发出前：立即展示目标角色。 */
-    fun choose(target: String) {
+    val saving: Boolean get() = inFlight != null
+    fun begin(target: String, serverRole: String?): Boolean {
+        if (target == effective(serverRole)) return false
         optimistic = target
-        saving = true
+        if (inFlight != null) return false
+        inFlight = target
+        return true
     }
-
-    /** HTTP 成功后：服务端已确认则清掉乐观值。 */
-    fun confirmServer(serverRole: String?) {
-        saving = false
+    fun succeeded(serverRole: String?) {
+        if (optimistic != inFlight) { inFlight = optimistic; return }
+        inFlight = null
         if (serverRole == optimistic) optimistic = null
     }
-
-    /** 请求失败：回滚乐观值。 */
     fun fail() {
-        optimistic = null
-        saving = false
+        if (optimistic != inFlight) { inFlight = optimistic; return }
+        optimistic = null; inFlight = null
     }
-
-    /** 收到房间状态：请求在途时保留本地高亮，其余情况以服务端为准。 */
-    fun receivedServerState() {
-        if (!saving) optimistic = null
+    fun receivedServerState(serverRole: String?) {
+        if (!saving && serverRole == optimistic) optimistic = null
     }
-
-    /** 展示值：乐观值优先。 */
     fun effective(serverRole: String?): String? = optimistic ?: serverRole
 }

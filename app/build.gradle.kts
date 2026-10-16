@@ -13,8 +13,8 @@ android {
         applicationId = "cc.runtick.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = (project.findProperty("versionName") as String?) ?: "1.0.3"
+        versionCode = 5
+        versionName = (project.findProperty("versionName") as String?) ?: "1.0.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -79,6 +79,8 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test:2.0.21")
 
     androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     debugImplementation("androidx.compose.ui:ui-tooling")

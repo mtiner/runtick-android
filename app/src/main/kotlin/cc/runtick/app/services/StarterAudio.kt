@@ -48,10 +48,10 @@ class StarterAudio(private val context: Context) {
      * 调度三段音频并依次回调提示语，返回 (枪声时刻ms, 额外不确定度ms=20)。
      * clicked 为点击「发令」的本地单调时刻。
      */
-    suspend fun fire(clicked: Double, delays: List<StageDelay>, onCue: (String) -> Unit): Pair<Double, Double> {
+    suspend fun fire(clicked: Double, delays: List<StageDelay>, onCue: (String) -> Unit, onDeadline: (Double?) -> Unit = {}): Pair<Double, Double> {
         stop()
         if (delays.size != 3 || delays.any { !it.valid }) {
-            throw ClientError(0, null, "等待时间须为 0–30 秒，随机上限不得小于下限")
+            throw ClientError(0, null, "等待时间须为 0–10 秒，随机上限不得小于下限")
         }
         val indices = if (!delays[0].enabled) listOf(1, 2) else listOf(0, 1, 2)
         val clips = indices.map { loadWav(listOf("on_your_marks", "set", "gun")[it]) }
@@ -134,10 +134,12 @@ class StarterAudio(private val context: Context) {
         val cues = listOf("各就位", "预备", "砰！")
         for (i in indices.indices) {
             val remaining = times[i] + latencyMs - MonotonicClock.now()
+            onDeadline(times[i] + latencyMs)
             if (remaining > 0) delay(remaining.roundToLong())
             if (generation.get() != token) throw CancellationException()
             onCue(cues[indices[i]])
         }
+        onDeadline(null)
         // 枪声输出时刻 = 规划时刻 + 缓冲延迟修正
         return Pair(times.last() + latencyMs, 20.0)
     }

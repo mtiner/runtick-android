@@ -16,6 +16,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,8 +40,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.DirectionsRun
 import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -79,6 +82,10 @@ import cc.runtick.app.core.User
 import cc.runtick.app.network.APIClient
 import cc.runtick.app.services.RoomModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlin.math.ceil
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 /** 角色字符串标题（与 core 的 DeviceRole 字符串保持一致）。 */
 internal fun roleTitle(role: String?): String = when (role) {
@@ -120,14 +127,21 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
     val submitting by model.submittingFlow.collectAsState()
     val stages by model.stagesFlow.collectAsState()
     // 普通局部变量：让空检查后的智能转换可用。
+    val roleRevision by model.roleRevisionFlow.collectAsState()
     val race = raceState
     val clock = clockState
-    val role = model.role
+    val role = roleRevision.let { model.role }
     val raceRole = model.raceRole
 
     // 终点触控全屏条件：raceRole 为终点、race 进行中、未保存终点时间、已校时且无待提交事件。
     val finishVisible = raceRole == "finish" && race != null && race.isActive &&
         race.finishAt == null && clock != null && pending == null
+
+    var dismissedRecording by rememberSaveable { mutableStateOf<String?>(null) }
+    val startVisible = raceRole == "start" && race?.isActive == true && dismissedRecording != race.id
+    val showFinish = finishVisible && dismissedRecording != race?.id
+    fun dismissRecording() { model.interrupt(); dismissedRecording = race?.id }
+    LaunchedEffect(startVisible, race?.id) { if (startVisible) model.autoFire() }
 
     Box(Modifier.fillMaxSize()) {
         RTPage {
@@ -149,10 +163,10 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                 modifier = Modifier.rtEntrance(40)
             )
             // 连接与校时卡。
-            RTCard(title = "房间 ${model.code}", modifier = Modifier.rtEntrance(80)) {
+            if (race?.isActive != true) RTCard(title = "房间 ${model.code}", modifier = Modifier.rtEntrance(80)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(
-                        if (connected) Icons.Filled.Wifi else Icons.Filled.WifiOff,
+                        if (connected) Icons.Filled.Language else Icons.Filled.CloudOff,
                         contentDescription = null,
                         tint = RT.muted,
                         modifier = Modifier.size(16.dp)
@@ -198,7 +212,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                                 Text(member.loginId, fontSize = 15.sp, color = RT.ink)
                                 Spacer(Modifier.weight(1f))
                                 Text(
-                                    "${roleTitle(member.deviceRole)} · ${if (member.online) "在线" else "离线"}",
+                                    "${roleTitle(if (member.loginId == user.loginId) role else member.deviceRole)} · ${if (member.online) "在线" else "离线"}",
                                     fontSize = 13.sp, color = RT.muted
                                 )
                             }
@@ -218,8 +232,8 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                 )
             }
 
-            // 起点专属：开始记录入口（弹出声音确认）。
-            if (role == "start" && (race == null || (!race.isActive && race.status != "completed"))) {
+            // 任一端确认设置后进入同一轮记录。
+            if (role != null && (race == null || (!race.isActive && race.status != "completed"))) {
                 RTButton(
                     onClick = { soundCheck = true },
                     secondary = false,
@@ -267,7 +281,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                         RTButton(
                             onClick = {
                                 soundCheck = false
-                                scope.launch { model.raceAction() }
+                                scope.launch { model.beginRecording() }
                             },
                             secondary = false
                         ) { RTButtonText("已确认声音，开始记录") }
@@ -278,8 +292,11 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
         }
 
         // 终点触控全屏。
-        if (finishVisible) {
-            FinishPad(model = model, loginId = user.loginId, leave = leave)
+        if (showFinish || startVisible) {
+            Dialog(onDismissRequest = { dismissRecording() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+                if (showFinish) FinishPad(model = model, loginId = user.loginId, leave = { dismissRecording() })
+                else StarterPad(model = model, onBack = { dismissRecording() })
+            }
         }
 
         // 房间内历史成绩全屏页。
@@ -291,14 +308,15 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
     }
 
     // 触控全屏或声音确认时抑制全局弹窗，错误由各自界面处理。
-    RTErrorAlert(model.errorFlow.collectAsState().value, enabled = !finishVisible && !soundCheck)
+    RTErrorAlert(model.errorFlow.collectAsState().value, enabled = !showFinish && !startVisible && !soundCheck)
 }
 
 /** 角色选择卡：胶囊分段控件 + 滑块动画。 */
 @Composable
 private fun RoleSelectionCard(model: RoomModel, connected: Boolean, busy: Boolean) {
     val scope = rememberCoroutineScope()
-    var saving by remember { mutableStateOf(false) }
+    val revision by model.roleRevisionFlow.collectAsState()
+    val displayedRole = revision.let { model.role }
 
     RTCard(title = "我的角色", modifier = Modifier.rtEntrance(80)) {
         BoxWithConstraints(
@@ -309,7 +327,7 @@ private fun RoleSelectionCard(model: RoomModel, connected: Boolean, busy: Boolea
         ) {
             val itemWidth = maxWidth / 2
             val highlightX by animateDpAsState(
-                targetValue = if (model.role == "start") 0.dp else itemWidth,
+                targetValue = if (displayedRole == "start") 0.dp else itemWidth,
                 animationSpec = spring(dampingRatio = 0.85f, stiffness = 400f),
                 label = "roleHighlight"
             )
@@ -323,32 +341,21 @@ private fun RoleSelectionCard(model: RoomModel, connected: Boolean, busy: Boolea
             )
             Row(Modifier.fillMaxWidth()) {
                 listOf("start" to Icons.Filled.DirectionsRun, "finish" to Icons.Filled.Flag).forEach { (value, icon) ->
-                    val selected = model.role == value
+                    val selected = displayedRole == value
                     Row(
                         modifier = Modifier
                             .weight(1f)
                             .height(46.dp)
                             .clickable(
-                                enabled = connected && !busy && !saving,
+                                enabled = connected && !busy,
                                 onClick = {
-                                    scope.launch {
-                                        saving = true
-                                        try { model.pick(value) } finally { saving = false }
-                                    }
+                                    scope.launch { model.pick(value) }
                                 }
                             ),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (saving && selected) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = RT.deep
-                            )
-                        } else {
-                            Icon(icon, contentDescription = null, tint = RT.ink, modifier = Modifier.size(16.dp))
-                        }
+                        Icon(icon, contentDescription = null, tint = RT.ink, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.size(8.dp))
                         Text(
                             roleTitle(value),
@@ -359,7 +366,6 @@ private fun RoleSelectionCard(model: RoomModel, connected: Boolean, busy: Boolea
                 }
             }
         }
-        if (saving) Text("正在同步角色…", fontSize = 12.sp, color = RT.muted)
     }
 }
 
@@ -507,29 +513,8 @@ private fun CompletedSection(
 /** 起点发令：提示语 + 三段等待设置 + 开始发令。 */
 @Composable
 private fun StartSection(model: RoomModel, race: Race) {
-    val scope = rememberCoroutineScope()
-    val syncing by model.syncingFlow.collectAsState()
-    val firing by model.firingFlow.collectAsState()
-    val pending by model.pendingFlow.collectAsState()
-    val clock by model.clockFlow.collectAsState()
-    val stages by model.stagesFlow.collectAsState()
-    val cue by model.cueFlow.collectAsState()
-    val editingDisabled = firing || race.startAt != null || pending != null
+    Text("本轮已进入记录流程，切换页面或返回会中断发令。", color = RT.muted)
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(
-            cue?.takeIf { it.isNotEmpty() } ?: "等待发令",
-            fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = RT.ink
-        )
-        StageSettings(stages = stages, disabled = editingDisabled, onChange = { model.stages = it })
-        Text("手机贴靠或固定在起跑器上；反应时为设备运动检测估算。", fontSize = 12.sp, color = RT.muted)
-        RTButton(
-            onClick = { scope.launch { model.fire() } },
-            secondary = false,
-            enabled = clock != null && !syncing && !firing &&
-                race.startAt == null && pending == null && stages.all { it.valid }
-        ) { RTButtonText("开始发令") }
-    }
 }
 
 /** 更新第 index 段设置（stages setter 会同步持久化）。 */
@@ -553,7 +538,7 @@ private fun FinishPad(model: RoomModel, loginId: String, leave: () -> Unit) {
     val race by model.raceFlow.collectAsState()
 
     // 禁止返回键关闭；返回键仅取消触控。
-    BackHandler(enabled = true) { model.cancelPress() }
+    BackHandler(enabled = true) { model.cancelPress(); leave() }
 
     // 切后台取消触控（不产生成绩）；离开页面同样取消。
     DisposableEffect(lifecycleOwner) {
@@ -589,7 +574,7 @@ private fun FinishPad(model: RoomModel, loginId: String, leave: () -> Unit) {
             }
     ) {
         Column(
-            Modifier.fillMaxSize().padding(20.dp),
+            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -655,5 +640,30 @@ private fun FinishPad(model: RoomModel, loginId: String, leave: () -> Unit) {
     }
 
     // FinishPad 自己的错误弹窗。
+    RTErrorAlert(model.errorFlow.collectAsState().value, enabled = true)
+}
+
+/** Full-screen starter presentation follows the same audio timeline as capture. */
+@Composable
+private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
+    val cue by model.cueFlow.collectAsState()
+    val deadline by model.cueDeadlineFlow.collectAsState()
+    var now by remember { mutableStateOf(MonotonicClock.now()) }
+    val lifecycle = LocalLifecycleOwner.current
+    BackHandler(onBack = onBack)
+    LaunchedEffect(deadline) { while (deadline != null) { now = MonotonicClock.now(); delay(100) } }
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) onBack() }
+        lifecycle.lifecycle.addObserver(observer)
+        onDispose { lifecycle.lifecycle.removeObserver(observer); model.interrupt() }
+    }
+    Column(Modifier.fillMaxSize().rtBackdrop().windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        RTButton(onClick = onBack) { RTButtonInkText("返回房间") }
+        Spacer(Modifier.weight(1f))
+        Text(cue ?: "正在准备发令…", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = RT.ink, textAlign = TextAlign.Center)
+        deadline?.let { Text(ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 96.sp, fontWeight = FontWeight.Bold, color = RT.ink) }
+        Spacer(Modifier.weight(1f))
+        Text("保持 App 在前台 · 枪声响起后出发", color = RT.muted)
+    }
     RTErrorAlert(model.errorFlow.collectAsState().value, enabled = true)
 }

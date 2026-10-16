@@ -73,10 +73,16 @@ data class HistoryRecord(
 /** 三段发令音的等待时间（秒）。 */
 @Serializable
 data class StageDelay(var random: Boolean, var min: Double, var max: Double, var enabled: Boolean = true, var reactionEnabled: Boolean = false) {
-    /** 上下限须有限且落在 0–30 秒，随机时上限不得小于下限。 */
+    /** 上下限须有限且落在 0–10 秒，随机时上限不得小于下限。 */
     val valid: Boolean
-        get() = min.isFinite() && max.isFinite() &&
-            min in 0.0..30.0 && max in 0.0..30.0 && (!random || max >= min)
+        get() = min.isFinite() && max.isFinite() && min == kotlin.math.round(min) && max == kotlin.math.round(max) &&
+            min in 0.0..10.0 && max in 0.0..10.0 && (!random || max >= min)
+
+    fun normalized(): StageDelay {
+        val lower = if (min.isFinite()) kotlin.math.round(min).coerceIn(0.0, 10.0) else 5.0
+        val upper = if (max.isFinite()) kotlin.math.round(max).coerceIn(lower, 10.0) else lower
+        return copy(min = lower, max = if (random) upper else lower)
+    }
 
     /** 非随机取下限；随机的等值区间（max<=min）同样取下限。 */
     fun sample(): Double = when {
@@ -87,9 +93,9 @@ data class StageDelay(var random: Boolean, var min: Double, var max: Double, var
 
     companion object {
         fun defaults(): List<StageDelay> = listOf(
-            StageDelay(false, 2.0, 2.0),
-            StageDelay(false, 2.0, 3.0),
-            StageDelay(true, 1.0, 2.0),
+            StageDelay(false, 5.0, 5.0),
+            StageDelay(false, 5.0, 5.0),
+            StageDelay(true, 5.0, 10.0),
         )
     }
 }

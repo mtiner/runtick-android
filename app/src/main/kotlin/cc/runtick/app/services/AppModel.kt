@@ -368,6 +368,12 @@ class RoomModel(
         set(value) { _cue.value = value }
     val cueFlow: StateFlow<String?> get() = _cue
 
+    private val _cueDeadline = MutableStateFlow<Double?>(null)
+    var cueDeadline: Double?
+        get() = _cueDeadline.value
+        set(value) { _cueDeadline.value = value }
+    val cueDeadlineFlow: StateFlow<Double?> get() = _cueDeadline
+
     private val _pressed = MutableStateFlow(false)
     var pressed: Boolean
         get() = _pressed.value
@@ -390,7 +396,7 @@ class RoomModel(
     var stages: List<StageDelay>
         get() = _stages.value
         set(value) {
-            _stages.value = value
+            _stages.value = value.map { it.normalized() }
             if (value.size == 3 && value.all { it.valid }) {
                 prefs.edit()
                     .putString("starter", AppJson.encodeToString(ListSerializer(StageDelay.serializer()), value))
@@ -403,8 +409,8 @@ class RoomModel(
         val saved = prefs.getString("starter", null)?.let { raw ->
             runCatching { AppJson.decodeFromString(ListSerializer(StageDelay.serializer()), raw) }.getOrNull()
         }
-        if (saved != null && saved.size == 3 && saved.all { it.valid }) {
-            _stages.value = saved
+        if (saved != null && saved.size == 3) {
+            _stages.value = saved.map { it.normalized() }
         }
         pending = pendingStore.load(pendingKey)
         scope.launch { TrainingSync.retry(context, api, user.id) }
@@ -470,6 +476,7 @@ class RoomModel(
         audio.stop(); reactionMotion.end(if (race?.status == "completed") "timeout" else "cancelled")
         firing = false
         cue = null
+        cueDeadline = null
     }
 
     /** 回前台：比赛进行中则重新校时，并让 WebSocket 立刻心跳一次。 */
@@ -514,29 +521,47 @@ class RoomModel(
         }
     }
 
-    /** 乐观选择设备角色，成功后补发一次 sync。 */
+    private val _roleRevision = MutableStateFlow(0)
+    val roleRevisionFlow: StateFlow<Int> get() = _roleRevision
+    private var attemptedAutoStart: String? = null
     suspend fun pick(deviceRole: String) {
         if (race?.active == true || !connected || busy || stopped) return
-        if (roleSelection.saving || deviceRole == role) return
-        // 在等待 HTTP 返回前先更新状态，界面立即有反馈
-        roleSelection.choose(deviceRole)
-        busy = true
-        error = ""
-        try {
-            api.request(
-                "/api/rooms/$code/role", "POST",
-                buildJsonObject { put("deviceRole", deviceRole) },
-            ) { }
-            roleSelection.confirmServer(serverRole)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            roleSelection.fail()
-            error = e.message ?: "发生未知错误"
+        val drain = roleSelection.begin(deviceRole, serverRole)
+        _roleRevision.value++
+        if (!drain) return
+        while (roleSelection.inFlight != null && !stopped) {
+            val target = roleSelection.inFlight!!
+            try {
+                api.request("/api/rooms/$code/role", "POST", buildJsonObject { put("deviceRole", target) }) { }
+                roleSelection.succeeded(serverRole)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Throwable) {
+                roleSelection.fail()
+                if (!roleSelection.saving) error = e.message ?: "角色切换未完成"
+            }
+            _roleRevision.value++
         }
-        busy = false
-        // sync 失败不能回滚已成功的 HTTP 角色变更
         runCatching { webSocket?.send("{\"type\":\"sync\"}") }
+    }
+
+    suspend fun beginRecording() {
+        if (!ready || !connected || role == null || roleSaving || clock?.fresh != true || syncing) {
+            error = if (roleSaving) "角色正在后台同步，请稍后开始记录。" else "请等待两端就绪并完成校时，再开始记录。"
+            return
+        }
+        raceAction()
+    }
+
+    suspend fun autoFire() {
+        val current = race ?: return
+        if (raceRole != "start" || !current.active || current.startAt != null || attemptedAutoStart == current.id) return
+        val settings = current.starterSettings ?: return
+        if (settings.size != 3 || settings.any { !it.valid }) return
+        if (clock?.fresh != true) calibrate()
+        if (clock?.fresh != true) return
+        attemptedAutoStart = current.id
+        stages = settings
+        fire()
     }
 
     /** 开始新比赛（action=start）或进入下一轮（action=next）。 */
@@ -567,7 +592,7 @@ class RoomModel(
             cue = "请保持手机与起跑器稳定…"
             reactionMotion.prepare(stages[0].reactionEnabled)
             val clicked = MonotonicClock.now()
-            val (gunAt, extra) = audio.fire(clicked, stages) { cue = it }
+            val (gunAt, extra) = audio.fire(clicked, stages, onCue = { cue = it }, onDeadline = { cueDeadline = it })
             capture("start", gunAt, clockSnapshot, extra)
             val raceId = race?.id
             if (raceId != null) reactionMotion.gun(gunAt) { result ->
@@ -745,7 +770,8 @@ class RoomModel(
             connected = true
             receivedRoomState = true
             members = event.members ?: emptyList()
-            roleSelection.receivedServerState()
+            roleSelection.receivedServerState(serverRole)
+            _roleRevision.value++
             ready = event.ready ?: false
         }
     }

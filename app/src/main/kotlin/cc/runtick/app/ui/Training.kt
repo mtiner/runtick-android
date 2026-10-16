@@ -23,7 +23,7 @@ import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun StageSettings(stages: List<StageDelay>, disabled: Boolean = false, onChange: (List<StageDelay>) -> Unit) {
-    fun update(index: Int, stage: StageDelay) { onChange(stages.toMutableList().also { it[index] = stage }) }
+    fun update(index: Int, stage: StageDelay) { onChange(stages.toMutableList().also { it[index] = stage.normalized() }) }
     Row {
         Text("检测起跑反应时", modifier = Modifier.weight(1f), color = RT.ink)
         Switch(checked = stages[0].reactionEnabled, onCheckedChange = { update(0, stages[0].copy(reactionEnabled = it)) }, enabled = !disabled)
@@ -40,8 +40,8 @@ import java.util.UUID
             Row { Text("随机等待", modifier = Modifier.weight(1f), color = RT.muted)
                 Switch(checked = stage.random, onCheckedChange = { update(index, stage.copy(random = it, max = maxOf(stage.min, stage.max))) }, enabled = !disabled) }
             Text(if (stage.random) "${stage.min.toInt()}–${stage.max.toInt()} 秒" else "${stage.min.toInt()} 秒", color = RT.ink)
-            if (stage.random) RangeSlider(value = stage.min.toFloat()..stage.max.toFloat(), onValueChange = { update(index, stage.copy(min = it.start.toDouble(), max = it.endInclusive.toDouble())) }, valueRange = 0f..30f, steps = 29, enabled = !disabled)
-            else Slider(value = stage.min.toFloat(), onValueChange = { update(index, stage.copy(min = it.toDouble(), max = maxOf(stage.max, it.toDouble()))) }, valueRange = 0f..30f, steps = 29, enabled = !disabled)
+            if (stage.random) RangeSlider(value = stage.min.toFloat()..stage.max.toFloat(), onValueChange = { update(index, stage.copy(min = it.start.toDouble(), max = it.endInclusive.toDouble())) }, valueRange = 0f..10f, steps = 9, enabled = !disabled)
+            else Slider(value = stage.min.toFloat(), onValueChange = { update(index, stage.copy(min = it.toDouble(), max = maxOf(stage.max, it.toDouble()))) }, valueRange = 0f..10f, steps = 9, enabled = !disabled)
         }
     }
 }
@@ -50,15 +50,13 @@ import java.util.UUID
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("runtick.room", Context.MODE_PRIVATE) }
-    var stages by remember { mutableStateOf(runCatching { AppJson.decodeFromString(ListSerializer(StageDelay.serializer()), prefs.getString("starter", "")!!) }.getOrNull()?.takeIf { it.size == 3 && it.all { s -> s.valid } } ?: StageDelay.defaults()) }
+    var stages by remember { mutableStateOf(runCatching { AppJson.decodeFromString(ListSerializer(StageDelay.serializer()), prefs.getString("starter", "")!!) }.getOrNull()?.takeIf { it.size == 3 } ?.map { it.normalized() } ?: StageDelay.defaults()) }
     var running by remember { mutableStateOf(false) }; var cue by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<ReactionResult?>(null) }; var error by remember { mutableStateOf("") }
-    var history by remember { mutableStateOf(SoloRecords()) }; var task by remember { mutableStateOf<Job?>(null) }
+    var showHistory by remember { mutableStateOf(false) }
+    if (showHistory) { SoloHistoryView(api, onBack = { showHistory = false }); return }
+    var task by remember { mutableStateOf<Job?>(null) }
     val audio = remember { StarterAudio(context) }; val motion = remember { ReactionMotion(context) }
-    suspend fun load(offset: Int = 0) { try {
-        val data = api.request("/api/starts?offset=$offset") { AppJson.decodeFromJsonElement(SoloRecords.serializer(), it) }
-        history = if (offset == 0) data else data.copy(records = history.records + data.records)
-    } catch (e: Exception) { error = e.message ?: "读取失败" } }
     fun stop() { task?.cancel(); audio.stop(); motion.end(); running = false }
     val view = LocalView.current
     DisposableEffect(running) { val previous = view.keepScreenOn; if (running) view.keepScreenOn = true; onDispose { view.keepScreenOn = previous } }
@@ -68,7 +66,7 @@ import java.util.UUID
         lifecycle.lifecycle.addObserver(observer)
         onDispose { stop(); lifecycle.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(user.id) { TrainingSync.retry(context, api, user.id); load() }
+    LaunchedEffect(user.id) { TrainingSync.retry(context, api, user.id) }
     RTPage {
         RTBrand(); RTHero(badge = "单人训练", title = "起跑发令", subtitle = "为每一次认真训练而生")
         RTCard(title = if (running) "正在发令" else "发令设置") {
@@ -83,14 +81,14 @@ import java.util.UUID
                         task = scope.launch {
                             try {
                                 motion.prepare(saved[0].reactionEnabled)
-                                val (at, _) = audio.fire(MonotonicClock.now(), saved) { cue = it }
+                                val (at, _) = audio.fire(MonotonicClock.now(), saved, onCue = { cue = it })
                                 val firedAt = System.currentTimeMillis()
                                 motion.gun(at) { value ->
                                     result = value
                                     scope.launch {
                                         try {
                                             val body = buildJsonObject { put("id", id); put("firedAt", firedAt); put("athleteId", user.id); put("settings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), saved)); put("reactionMs", value.reactionMs?.let { JsonPrimitive(it) } ?: JsonNull); put("reactionStatus", value.reactionStatus) }
-                                            TrainingSync.send(context, api, user.id, "/api/starts", body, id); load()
+                                            TrainingSync.send(context, api, user.id, "/api/starts", body, id)
                                         } catch (e: Exception) { error = "记录已保留，联网后重试：${e.message}" }
                                     }
                                 }
@@ -104,16 +102,7 @@ import java.util.UUID
                 RTButton(onClick = { stop() }) { RTButtonInkText("结束本轮") }
             }
         }
-        RTCard(title = "单人起跑记录") {
-            Text("不计入距离成绩或 PB。未检测到移动不会记作 0 ms。", fontSize = 12.sp, color = RT.muted)
-            history.records.forEach { record ->
-                if (record.reactionStatus == "false_start") RTChip("抢跑", lemon = true)
-                Text(reactionText(record.reactionMs, record.reactionStatus), color = RT.ink)
-                Text(Date(record.createdAt.toLong()).toString(), fontSize = 12.sp, color = RT.muted)
-            }
-            RTButton(onClick = { scope.launch { TrainingSync.retry(context, api, user.id); load() } }) { RTButtonInkText("同步并刷新记录") }
-            if (history.hasMore) RTButton(onClick = { scope.launch { load(history.records.size) } }) { RTButtonInkText("加载更多") }
-        }
+        RTButton(onClick = { showHistory = true }) { RTButtonInkText("单人起跑记录") }
     }
     RTErrorAlert(error, enabled = true)
 }
@@ -130,4 +119,38 @@ import java.util.UUID
         }
         RTButton(onClick = onBack) { RTButtonInkText("返回我的") }
     }
+}
+
+@Composable fun SoloHistoryView(api: APIClient, onBack: () -> Unit) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    val scope = rememberCoroutineScope()
+    var history by remember { mutableStateOf(SoloRecords()) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    suspend fun load(reset: Boolean = true) {
+        if (loading) return
+        loading = true
+        try {
+            val data = api.request("/api/starts?offset=${if (reset) 0 else history.records.size}") { AppJson.decodeFromJsonElement(SoloRecords.serializer(), it) }
+            history = if (reset) data else data.copy(records = history.records + data.records)
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { error = e.message ?: "读取失败" }
+        finally { loading = false }
+    }
+    LaunchedEffect(Unit) { load() }
+    RTPage {
+        RTButton(onClick = onBack) { RTButtonInkText("返回") }
+        RTBrand(); RTHero(badge = "训练档案", title = "单人起跑记录", subtitle = "手机运动检测估算 · 不计入距离成绩或 PB")
+        RTCard {
+            if (history.records.isEmpty()) Text("暂无记录", color = RT.muted)
+            history.records.forEach { record ->
+                if (record.reactionStatus == "false_start") RTChip("抢跑", lemon = true)
+                Text(reactionText(record.reactionMs, record.reactionStatus), color = RT.ink)
+                Text(Date(record.createdAt.toLong()).toString(), fontSize = 12.sp, color = RT.muted)
+            }
+            if (history.hasMore) RTButton(onClick = { scope.launch { load(false) } }, enabled = !loading) { RTButtonInkText("加载更多") }
+            RTButton(onClick = { scope.launch { load() } }, enabled = !loading) { RTButtonInkText("刷新记录") }
+        }
+    }
+    RTErrorAlert(error, enabled = true)
 }

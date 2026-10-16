@@ -75,6 +75,9 @@ data class HistoryData(
  */
 @Composable
 fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    var showSolo by remember { mutableStateOf(false) }
+    if (showSolo) { SoloHistoryView(api, onBack = { showSolo = false }); return }
     var data by remember { mutableStateOf<HistoryData?>(null) }
     var athleteId by remember { mutableStateOf(0L) }
     var distance by remember { mutableStateOf(0) }
@@ -133,6 +136,7 @@ fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
                 subtitle = "每一次出发，都在向更好的自己靠近。",
                 modifier = Modifier.rtEntrance(40)
             )
+            RTButton(onClick = { showSolo = true }) { RTButtonInkText("单人起跑记录") }
             RTCard(title = "筛选") {
                 val current = data
                 if (current != null && current.athletes.size > 1) {

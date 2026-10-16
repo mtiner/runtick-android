@@ -12,6 +12,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -135,6 +138,12 @@ fun Modifier.rtBackdrop(): Modifier = this
             center = Offset(size.width, size.height), radius = 300.dp.toPx()
         ))
     }
+
+/** Background may extend behind system bars; interactive content stays inside safe drawing. */
+@Composable
+fun RTSafeArea(content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) { content() }
+}
 
 /** 页面骨架：可滚动、内容最大宽度 460、统一直边距与间距。 */
 @Composable
@@ -583,7 +592,7 @@ fun RTCodeInput(
     }
 }
 
-/** 品牌图标：112dp 圆角 28 方块，渐变底 + 简化停表图形。 */
+/** 品牌图标：使用用户提供的 iOS 同款导出资源。 */
 @Composable
 fun RTBrandIcon(modifier: Modifier = Modifier, size: Dp = 112.dp) {
     androidx.compose.foundation.Image(

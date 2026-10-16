@@ -8,6 +8,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
@@ -23,6 +27,7 @@ import cc.runtick.app.services.AppModel
 import cc.runtick.app.ui.LaunchContainer
 import cc.runtick.app.ui.RTUpdateDialog
 import cc.runtick.app.ui.RT
+import cc.runtick.app.ui.RTSafeArea
 import cc.runtick.app.ui.RunTickTheme
 import cc.runtick.app.ui.RootView
 
@@ -68,12 +73,14 @@ class MainActivity : ComponentActivity() {
             // 锁浅色：背景由 RTBackdrop 提供，Surface 仅作底色。
             RunTickTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = RT.background) {
-                    KeepScreenOnWhileInRoom(model)
-                    LaunchContainer(model = model) {
-                        RootView(model = model)
+                    RTSafeArea {
+                        KeepScreenOnWhileInRoom(model)
+                        LaunchContainer(model = model) {
+                            RootView(model = model)
+                        }
+                        // App 更新弹窗：全局置顶，引导页之上也可见。
+                        RTUpdateDialog(model = model)
                     }
-                    // App 更新弹窗：全局置顶，引导页之上也可见。
-                    RTUpdateDialog(model = model)
                 }
             }
         }

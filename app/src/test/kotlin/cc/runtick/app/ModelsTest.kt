@@ -78,7 +78,7 @@ class ModelsTest {
     fun `非法配置判为无效`() {
         assertFalse(StageDelay(true, 3.0, 2.0).valid)          // 随机且 max < min
         assertFalse(StageDelay(false, Double.NaN, 2.0).valid)  // NaN
-        assertFalse(StageDelay(false, 31.0, 2.0).valid)        // min > 30
+        assertFalse(StageDelay(false, 31.0, 2.0).valid)        // min > 10
         assertFalse(StageDelay(false, -0.1, 2.0).valid)        // min < 0
         assertTrue(StageDelay(false, 2.0, 2.0).valid)          // 非随机等值区间合法
         assertTrue(StageDelay(true, 2.0, 2.0).valid)           // 随机等值区间合法
@@ -88,6 +88,15 @@ class ModelsTest {
     fun `非随机 sample 等于下限`() {
         assertEquals(2.5, StageDelay(false, 2.5, 5.0).sample(), 0.0)
         assertEquals(2.0, StageDelay(true, 2.0, 2.0).sample(), 0.0)
+    }
+
+    @Test fun legacyDelaySettingsMigrateToWholeSecondsAndTenSecondLimit() {
+        val migrated = StageDelay(true, 1.6, 25.0, enabled = false, reactionEnabled = true).normalized()
+        assertEquals(2.0, migrated.min, 0.0); assertEquals(10.0, migrated.max, 0.0)
+        assertFalse(migrated.enabled); assertTrue(migrated.reactionEnabled); assertTrue(migrated.valid)
+        assertFalse(StageDelay(false, 11.0, 11.0).valid)
+        assertFalse(StageDelay(true, 1.5, 5.0).valid)
+        assertEquals(StageDelay.defaults(), listOf(StageDelay(false, 5.0, 5.0), StageDelay(false, 5.0, 5.0), StageDelay(true, 5.0, 10.0)))
     }
 
     // ---------- PendingEvent 序列化 ----------
