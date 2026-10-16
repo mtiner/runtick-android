@@ -56,7 +56,7 @@ class NavigationUiTest {
     private fun screenshot(name: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val file = File(instrumentation.targetContext.getExternalFilesDir(null), "$name.png")
-        val bitmap = instrumentation.uiAutomation.takeScreenshot()
+        val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
     }
@@ -116,11 +116,14 @@ class NavigationUiTest {
             compose.setContent { RunTickTheme { RTSafeArea { RoomView(model, api, User(1, "test"), leave = {}) } } }
             compose.onNodeWithText("开始记录").performScrollTo().performClick()
             compose.onNodeWithText("已确认声音，开始记录").performScrollTo().performClick()
-            compose.onNodeWithText("按住屏幕，等待冲线").assertIsDisplayed()
+            compose.waitUntil(10000) { model.race?.active == true }
+            compose.waitUntil(10000) {
+                runCatching { compose.onNodeWithText("按住屏幕，等待冲线").assertIsDisplayed(); true }.getOrDefault(false)
+            }
             screenshot("finish-recording-cutout")
             pressBack()
             compose.onNodeWithText("按住屏幕，等待冲线").assertDoesNotExist()
-        } finally { compose.runOnIdle { model.stop() } }
+        } finally { screenshot("finish-final-state"); compose.runOnIdle { model.stop() } }
     }
     @Test fun startPhoneAutomaticallyPlaysTheConfirmedPlan() {
         val api = APIClient(server.url("/").toString().trimEnd('/'))
