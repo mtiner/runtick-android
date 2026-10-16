@@ -156,7 +156,7 @@ data class PendingEvent(val code: String, val raceId: String, val userId: Long, 
 // ---------- 响应解码辅助 ----------
 
 @Serializable
-data class Room(val code: String, val status: String? = null, val createdAt: Double? = null)
+data class Room(val code: String, val status: String? = null, val createdAt: String? = null)
 
 /** 房间成员状态（房间详情与 WebSocket state 共用）。 */
 @Serializable

@@ -104,14 +104,15 @@ class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Cont
         }
     }
 
-    /** 构造 WebSocket 握手请求：https→wss，手动携带 Cookie 头。 */
+    /**
+     * 构造 WebSocket 握手请求：手动携带 Cookie 头。
+     * OkHttp 4.x 的 HttpUrl 不支持 ws/wss scheme（会抛 IllegalArgumentException），
+     * 直接用 https URL——newWebSocket 会自动按 https→wss、http→ws 升级。
+     */
     fun socketRequest(code: String): Request {
         val httpUrl = url("/api/rooms/$code/ws")
-        val wsUrl = httpUrl.newBuilder()
-            .scheme(if (httpUrl.isHttps) "wss" else "ws")
-            .build()
         val cookies = jar.loadForRequest(httpUrl)
-        val builder = Request.Builder().url(wsUrl)
+        val builder = Request.Builder().url(httpUrl)
         if (cookies.isNotEmpty()) {
             builder.header("Cookie", cookies.joinToString("; ") { "${it.name}=${it.value}" })
         }
