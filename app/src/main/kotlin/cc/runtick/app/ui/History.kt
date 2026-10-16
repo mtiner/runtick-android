@@ -48,6 +48,7 @@ data class HistoryAthlete(val id: Long, val loginId: String)
 
 @Serializable
 data class HistoryRecordDto(
+    val reactionMs: Double? = null, val reactionStatus: String? = null,
     val raceId: String,
     val athleteId: Long,
     val recorderId: Long,
@@ -184,6 +185,7 @@ fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
                         current.records.forEach { record ->
                             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column {
+                                    Text(cc.runtick.app.core.reactionText(record.reactionMs, record.reactionStatus), fontSize = 12.sp, color = RT.muted)
                                     Text("${record.distance} 米", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = RT.ink)
                                     Text(
                                         dateFormat.format(Date(record.performedAt.toLong())),

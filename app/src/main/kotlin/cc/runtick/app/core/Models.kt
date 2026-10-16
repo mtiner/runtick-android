@@ -35,6 +35,7 @@ data class Race(
     val startUserId: Long,
     val finishUserId: Long,
     val savedResult: SavedResult? = null,
+    val reactionMs: Double? = null, val reactionStatus: String? = null,
 ) {
     /** ready/running 视为进行中。 */
     val active: Boolean get() = status == "ready" || status == "running"
@@ -65,11 +66,12 @@ data class HistoryRecord(
     val savedAt: Double,
     val isPb: Boolean,
     val pbImprovementMs: Double? = null,
+    val reactionMs: Double? = null, val reactionStatus: String? = null,
 )
 
 /** 三段发令音的等待时间（秒）。 */
 @Serializable
-data class StageDelay(var random: Boolean, var min: Double, var max: Double) {
+data class StageDelay(var random: Boolean, var min: Double, var max: Double, var enabled: Boolean = true) {
     /** 上下限须有限且落在 0–30 秒，随机时上限不得小于下限。 */
     val valid: Boolean
         get() = min.isFinite() && max.isFinite() &&

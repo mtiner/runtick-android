@@ -289,6 +289,7 @@ class RoomModel(
     private val prefs = context.getSharedPreferences("runtick.room", Context.MODE_PRIVATE)
     private val pendingStore: PendingStore = store ?: SharedPreferencesPendingStore(context)
     private val audio = StarterAudio(context)
+    private val reactionMotion = ReactionMotion(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val pendingKey = "pending:${api.baseUrl.trimEnd('/')}:${user.id}:$code"
@@ -406,6 +407,7 @@ class RoomModel(
             _stages.value = saved
         }
         pending = pendingStore.load(pendingKey)
+        scope.launch { TrainingSync.retry(context, api, user.id) }
     }
 
     /** members 中自己的服务端角色。 */
@@ -455,7 +457,7 @@ class RoomModel(
         runCatching { webSocket?.cancel() }
         webSocket = null
         connected = false
-        audio.stop()
+        audio.stop(); reactionMotion.stop()
         interrupt()
     }
 
@@ -463,7 +465,7 @@ class RoomModel(
     fun interrupt() {
         pressed = false
         eventClock = null
-        audio.stop()
+        audio.stop(); reactionMotion.stop()
         firing = false
         cue = null
     }
@@ -559,14 +561,24 @@ class RoomModel(
         val clockSnapshot = snapshot!!
         firing = true
         try {
+            cue = "请保持手机与起跑器稳定…"
+            reactionMotion.prepare()
             val clicked = MonotonicClock.now()
             val (gunAt, extra) = audio.fire(clicked, stages) { cue = it }
             capture("start", gunAt, clockSnapshot, extra)
+            val raceId = race?.id
+            if (raceId != null) reactionMotion.gun(gunAt) { result ->
+                race = race?.copy(reactionMs = result.reactionMs, reactionStatus = result.reactionStatus)
+                scope.launch {
+                    try { TrainingSync.send(context, api, user.id, "/api/rooms/$code/races/$raceId/reaction", TrainingSync.reactionBody(result.reactionMs, result.reactionStatus), raceId) }
+                    catch (e: Exception) { error = "反应时已保留，联网后重试：${e.message}" }
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             error = e.message ?: "发生未知错误"
-            audio.stop()
+            audio.stop(); reactionMotion.stop()
         } finally {
             firing = false
         }

@@ -79,6 +79,7 @@ fun RootView(model: AppModel) {
 
     // 0 = 房间详情，1 = 我的
     var destination by rememberSaveable { mutableIntStateOf(0) }
+    var showAbout by rememberSaveable { mutableStateOf(false) }
     var showProfileHistory by rememberSaveable { mutableStateOf(false) }
 
     // 登录状态变化时回到房间详情 Tab。
@@ -88,7 +89,7 @@ fun RootView(model: AppModel) {
     }
     // 切到「我的」打断房间内触控/发令；切回「房间详情」重新打开当前房间。
     LaunchedEffect(destination) {
-        if (destination == 1) {
+        if (destination != 0) {
             model.room?.interrupt()
         } else if (model.user != null && !model.loading) {
             try { model.openCurrentRoom() }
@@ -140,8 +141,9 @@ fun RootView(model: AppModel) {
                         )
                         else -> LobbyView(model, onHelp = { showHelp = true })
                     }
+                    2 -> if (user != null && model.api != null) SoloStartView(model.api!!, user!!) else LoginView(model, onHelp = { showHelp = true })
                     else -> if (user != null) {
-                        ProfileView(model = model, user = user!!, onOpenHistory = { showProfileHistory = true }, onHelp = { showHelp = true })
+                        ProfileView(model = model, user = user!!, onOpenHistory = { showProfileHistory = true }, onAbout = { showAbout = true }, onHelp = { showHelp = true })
                     } else LoginView(model, onHelp = { showHelp = true })
                 }
             }
@@ -152,6 +154,11 @@ fun RootView(model: AppModel) {
                     icon = { Icon(Icons.Filled.House, contentDescription = null) },
                     label = { Text("房间详情") },
                     colors = tabColors()
+                )
+                NavigationBarItem(
+                    selected = destination == 2, onClick = { destination = 2 },
+                    icon = { Icon(Icons.Filled.AddCircle, contentDescription = null) },
+                    label = { Text("起跑发令") }, colors = tabColors()
                 )
                 NavigationBarItem(
                     selected = destination == 1,
@@ -172,6 +179,8 @@ fun RootView(model: AppModel) {
         if (showProfileHistory && user != null && model.api != null) {
             HistoryView(api = model.api!!, user = user!!, room = null, onBack = { showProfileHistory = false })
         }
+
+        if (showAbout) AboutView(onBack = { showAbout = false })
 
         // 全局 loading 遮罩：半透明圆角背景 + 进度圈。
         if (loading) {
@@ -396,7 +405,7 @@ fun GuideView(
 
 /** 个人中心。 */
 @Composable
-fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onHelp: () -> Unit = {}) {
+fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout: () -> Unit = {}, onHelp: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val loading by model.loadingFlow.collectAsState()
 
@@ -430,6 +439,7 @@ fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onHelp: 
             Spacer(Modifier.weight(1f))
             Icon(Icons.AutoMirrored.Filled.ArrowRight, contentDescription = null, tint = RT.ink, modifier = Modifier.size(18.dp))
         }
+        RTButton(onClick = onAbout) { RTButtonInkText("关于 RunTick") }
         RTButton(
             onClick = { scope.launch { model.perform { model.logout() } } },
             enabled = !loading,

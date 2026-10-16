@@ -53,12 +53,8 @@ class StarterAudio(private val context: Context) {
         if (delays.size != 3 || delays.any { !it.valid }) {
             throw ClientError(0, null, "等待时间须为 0–30 秒，随机上限不得小于下限")
         }
-        val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val maxVolume = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        if (manager.getStreamVolume(AudioManager.STREAM_MUSIC) < maxVolume * 0.999) {
-            throw ClientError(0, null, "请先将媒体音量调至最大，发令音必须清晰可靠")
-        }
-        val clips = listOf("on_your_marks", "set", "gun").map { loadWav(it) }
+        val indices = if (!delays[0].enabled) listOf(1, 2) else listOf(0, 1, 2)
+        val clips = indices.map { loadWav(listOf("on_your_marks", "set", "gun")[it]) }
         val sampleRate = clips[0].sampleRate
         if (clips.any { it.sampleRate != sampleRate || it.channels != clips[0].channels }) {
             throw ClientError(0, null, "发令音频格式不一致")
@@ -67,11 +63,11 @@ class StarterAudio(private val context: Context) {
         val bytesPerFrame = clips[0].channels * 2
         val framesPerMs = sampleRate / 1000.0
 
-        val sampled = delays.map { it.sample() }
+        val sampled = indices.map { delays[it].sample() }
         val anchor = MonotonicClock.now()
         var at = max(anchor + 100.0, clicked + sampled[0] * 1000.0)
         val times = mutableListOf(at)
-        for (i in 1..2) {
+        for (i in 1 until indices.size) {
             at += clips[i - 1].durationMs + sampled[i] * 1000.0
             times.add(at)
         }
@@ -104,7 +100,7 @@ class StarterAudio(private val context: Context) {
         audioScope.launch {
             try {
                 var writtenFrames = 0L
-                for (i in 0..2) {
+                for (i in indices.indices) {
                     val target = ((times[i] - anchor) * framesPerMs).roundToLong().coerceAtLeast(0)
                     val gap = target - writtenFrames
                     if (gap > 0) {
@@ -134,16 +130,16 @@ class StarterAudio(private val context: Context) {
             delay(10)
         }
 
-        onCue("等待各就位…")
+        onCue(if (delays[0].enabled) "等待各就位…" else "等待预备…")
         val cues = listOf("各就位", "预备", "砰！")
-        for (i in 0..2) {
+        for (i in indices.indices) {
             val remaining = times[i] + latencyMs - MonotonicClock.now()
             if (remaining > 0) delay(remaining.roundToLong())
             if (generation.get() != token) throw CancellationException()
-            onCue(cues[i])
+            onCue(cues[indices[i]])
         }
         // 枪声输出时刻 = 规划时刻 + 缓冲延迟修正
-        return Pair(times[2] + latencyMs, 20.0)
+        return Pair(times.last() + latencyMs, 20.0)
     }
 
     /** 非阻塞写循环：缓冲满时短暂让出，可被 stop() 及时取消。 */

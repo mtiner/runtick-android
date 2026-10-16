@@ -377,6 +377,7 @@ private fun RaceCard(
     )[race.status] ?: race.status
 
     RTCard(title = "本轮 · $statusTitle") {
+        if (race.reactionStatus != null) Text(cc.runtick.app.core.reactionText(race.reactionMs, race.reactionStatus), color = RT.ink)
         when {
             race.status == "completed" -> CompletedSection(model, race, raceRole, distance, onDistanceChange)
             race.isActive -> {
@@ -518,49 +519,8 @@ private fun StartSection(model: RoomModel, race: Race) {
             cue?.takeIf { it.isNotEmpty() } ?: "等待发令",
             fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = RT.ink
         )
-        // 三段等待设置。
-        stages.forEachIndexed { index, stage ->
-            val labels = listOf("点击 → 各就位", "各就位结束 → 预备", "预备结束 → 枪声")
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(labels[index], fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RT.ink)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("随机等待", fontSize = 14.sp, color = RT.ink)
-                    Spacer(Modifier.weight(1f))
-                    Switch(
-                        checked = stage.random,
-                        onCheckedChange = { enabled -> updateStage(model, index) { it.copy(random = enabled) } },
-                        enabled = !editingDisabled,
-                        colors = SwitchDefaults.colors(checkedTrackColor = RT.deep)
-                    )
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("等待 / 下限（秒）", fontSize = 14.sp, color = RT.ink)
-                    Spacer(Modifier.weight(1f))
-                    RTTextField(
-                        value = formatStageSeconds(stage.min),
-                        onValueChange = { text -> text.toDoubleOrNull()?.let { updateStage(model, index) { s -> s.copy(min = it) } } },
-                        modifier = Modifier.width(120.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        textAlign = TextAlign.End,
-                        enabled = !editingDisabled
-                    )
-                }
-                if (stage.random) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("上限（秒）", fontSize = 14.sp, color = RT.ink)
-                        Spacer(Modifier.weight(1f))
-                        RTTextField(
-                            value = formatStageSeconds(stage.max),
-                            onValueChange = { text -> text.toDoubleOrNull()?.let { updateStage(model, index) { s -> s.copy(max = it) } } },
-                            modifier = Modifier.width(120.dp),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            textAlign = TextAlign.End,
-                            enabled = !editingDisabled
-                        )
-                    }
-                }
-            }
-        }
+        StageSettings(stages = stages, disabled = editingDisabled, onChange = { model.stages = it })
+        Text("手机贴靠或固定在起跑器上；反应时为设备运动检测估算。", fontSize = 12.sp, color = RT.muted)
         RTButton(
             onClick = { scope.launch { model.fire() } },
             secondary = false,
