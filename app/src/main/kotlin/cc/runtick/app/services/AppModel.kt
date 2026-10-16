@@ -525,24 +525,26 @@ class RoomModel(
     private val _roleRevision = MutableStateFlow(0)
     val roleRevisionFlow: StateFlow<Int> get() = _roleRevision
     private var attemptedAutoStart: String? = null
-    suspend fun pick(deviceRole: String) {
+    fun pick(deviceRole: String) {
         if (race?.active == true || !connected || busy || stopped) return
         val drain = roleSelection.begin(deviceRole, serverRole)
         _roleRevision.value++
         if (!drain) return
-        while (roleSelection.inFlight != null && !stopped) {
-            val target = roleSelection.inFlight!!
-            try {
-                api.request("/api/rooms/$code/role", "POST", buildJsonObject { put("deviceRole", target) }) { }
-                roleSelection.succeeded(serverRole)
-            } catch (e: CancellationException) { throw e }
-            catch (e: Throwable) {
-                roleSelection.fail()
-                if (!roleSelection.saving) error = e.message ?: "角色切换未完成"
+        scope.launch {
+            while (roleSelection.inFlight != null && !stopped) {
+                val target = roleSelection.inFlight!!
+                try {
+                    api.request("/api/rooms/$code/role", "POST", buildJsonObject { put("deviceRole", target) }) { }
+                    roleSelection.succeeded(serverRole)
+                } catch (e: CancellationException) { throw e }
+                catch (e: Throwable) {
+                    roleSelection.fail()
+                    if (!roleSelection.saving) error = e.message ?: "角色切换未完成"
+                }
+                _roleRevision.value++
             }
-            _roleRevision.value++
+            runCatching { webSocket?.send("{\"type\":\"sync\"}") }
         }
-        runCatching { webSocket?.send("{\"type\":\"sync\"}") }
     }
 
     suspend fun beginRecording() {

@@ -26,7 +26,7 @@ import cc.runtick.app.ui.*
 import okhttp3.mockwebserver.*
 import org.junit.*
 import org.junit.Assert.*
-import java.io.File
+import java.util.concurrent.TimeUnit
 
 class NavigationUiTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
@@ -34,6 +34,10 @@ class NavigationUiTest {
     @Before fun setup() {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.method == "POST" && request.path == "/api/rooms/1234/role") {
+                    return MockResponse().setHeader("Content-Type", "application/json")
+                        .setBody("""{"ok":true,"data":{}}""").setBodyDelay(2, TimeUnit.SECONDS)
+                }
                 if (request.method == "POST" && request.path == "/api/rooms/1234/races/auto-plan/events") {
                     val at = AppJson.parseToJsonElement(request.body.readUtf8()).jsonObject["at"]!!
                     return MockResponse().setHeader("Content-Type", "application/json").setBody(
@@ -154,6 +158,28 @@ class NavigationUiTest {
             compose.onNodeWithText("开始发令").assertDoesNotExist()
             compose.waitUntil(15000) { model.pending != null || model.race?.startAt != null }
             screenshot("starter-recording-cutout")
+        } finally { compose.runOnIdle { model.stop() } }
+    }
+
+    @Test fun roleSyncSurvivesLeavingTheRoomPage() {
+        val api = APIClient(server.url("/").toString().trimEnd('/'))
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        lateinit var model: RoomModel
+        val showRoom = mutableStateOf(true)
+        compose.runOnIdle {
+            model = RoomModel(context, api, User(1, "test"), "1234")
+            model.members = listOf(MemberState("test", "finish", true), MemberState("starter", "start", true))
+            model.connected = true
+        }
+        try {
+            compose.setContent { RunTickTheme { RTSafeArea {
+                if (showRoom.value) RoomView(model, api, User(1, "test"), leave = {}) else Text("我的测试页")
+            } } }
+            compose.onNodeWithText("起点").performScrollTo().performClick()
+            compose.runOnIdle { assertEquals("start", model.role); assertTrue(model.roleSaving); showRoom.value = false }
+            compose.onNodeWithText("我的测试页").assertIsDisplayed()
+            compose.waitUntil(10000) { !model.roleSaving }
+            compose.runOnIdle { assertEquals("start", model.role) }
         } finally { compose.runOnIdle { model.stop() } }
     }
 

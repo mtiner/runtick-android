@@ -356,7 +356,7 @@ private fun RoleSelectionCard(model: RoomModel, connected: Boolean, busy: Boolea
                             .clickable(
                                 enabled = connected && !busy,
                                 onClick = {
-                                    scope.launch { model.pick(value) }
+                                    model.pick(value)
                                 }
                             ),
                         horizontalArrangement = Arrangement.Center,
