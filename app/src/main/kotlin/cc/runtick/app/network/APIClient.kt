@@ -1,0 +1,177 @@
+package cc.runtick.app.network
+
+import android.content.Context
+import cc.runtick.app.core.AppConfiguration
+import cc.runtick.app.core.AppJson
+import cc.runtick.app.core.ClientError
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.PortUnreachableException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+/**
+ * API 客户端：统一信封解析（{ok, data, error}）、Cookie 会话、WebSocket 请求构造。
+ * 请求不携带 Origin 头（服务端同源校验只拦跨源 Origin）。
+ */
+class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Context? = null) {
+
+    private val jar = PersistentCookieJar(context)
+
+    val client: OkHttpClient = OkHttpClient.Builder()
+        .cookieJar(jar)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
+        .build()
+
+    /** 收到 401 时回调（一般用于清理本地会话）。 */
+    var unauthorized: (() -> Unit)? = null
+
+    private fun url(path: String): HttpUrl =
+        baseUrl.toHttpUrl().resolve(path.trimStart('/'))
+            ?: throw ClientError(0, null, "无效的服务器地址")
+
+    /**
+     * 发起请求并解出 data 字段。
+     * HTTP 非 2xx 或 ok=false 都抛 ClientError。
+     */
+    suspend fun <T> request(
+        path: String,
+        method: String = "GET",
+        body: JsonElement? = null,
+        decode: (JsonElement) -> T,
+    ): T {
+        val requestBody = when {
+            body != null -> AppJson.encodeToString(JsonElement.serializer(), body)
+                .toRequestBody("application/json".toMediaType())
+            // OkHttp 要求 POST/PUT 等必须携带 body，无内容时发空体
+            method != "GET" && method != "HEAD" -> ByteArray(0).toRequestBody()
+            else -> null
+        }
+        val call = client.newCall(Request.Builder().url(url(path)).method(method, requestBody).build())
+        val response = try {
+            suspendCancellableCoroutine<Response> { cont ->
+                call.enqueue(object : Callback {
+                    override fun onResponse(call: Call, response: Response) {
+                        if (cont.isActive) cont.resume(response)
+                    }
+
+                    override fun onFailure(call: Call, e: IOException) {
+                        if (cont.isActive) cont.resumeWithException(e)
+                    }
+                })
+                cont.invokeOnCancellation { call.cancel() }
+            }
+        } catch (e: IOException) {
+            throw networkError(e)
+        }
+        response.use { resp ->
+            if (resp.code == 401) unauthorized?.invoke()
+            val text = resp.body?.string().orEmpty()
+            val envelope = runCatching { AppJson.parseToJsonElement(text).jsonObject }.getOrNull()
+            val ok = envelope?.get("ok")?.jsonPrimitive?.booleanOrNull
+            val data = envelope?.get("data")?.takeIf { it !is JsonNull }
+            val errorPayload = envelope?.get("error")?.jsonObject
+            val code = errorPayload?.get("code")?.jsonPrimitive?.contentOrNull
+            val message = errorPayload?.get("message")?.jsonPrimitive?.contentOrNull
+            if (resp.code !in 200..299 || ok != true || data == null) {
+                throw ClientError(resp.code, code ?: "UNKNOWN", message ?: "请求失败，请稍后重试")
+            }
+            return decode(data)
+        }
+    }
+
+    /** 构造 WebSocket 握手请求：https→wss，手动携带 Cookie 头。 */
+    fun socketRequest(code: String): Request {
+        val httpUrl = url("/api/rooms/$code/ws")
+        val wsUrl = httpUrl.newBuilder()
+            .scheme(if (httpUrl.isHttps) "wss" else "ws")
+            .build()
+        val cookies = jar.loadForRequest(httpUrl)
+        val builder = Request.Builder().url(wsUrl)
+        if (cookies.isNotEmpty()) {
+            builder.header("Cookie", cookies.joinToString("; ") { "${it.name}=${it.value}" })
+        }
+        return builder.build()
+    }
+
+    /** 清空会话 Cookie（登出或 401 时调用）。 */
+    fun clearCookies() {
+        jar.clear()
+    }
+
+    /** 网络层异常 → 中文提示。 */
+    private fun networkError(e: IOException): ClientError = ClientError(0, null, when (e) {
+        is SocketTimeoutException -> "连接服务器超时，请检查网络后重试"
+        is ConnectException, is UnknownHostException, is NoRouteToHostException, is PortUnreachableException ->
+            "网络连接已断开，请检查网络设置"
+        else -> "暂时无法连接服务器，请稍后重试"
+    })
+}
+
+/**
+ * 持久化 CookieJar：基于 SharedPreferences 保存会话 Cookie，
+ * 支持 App 重启后 restore() 恢复会话。
+ */
+private class PersistentCookieJar(context: Context?) : CookieJar {
+    private val prefs = context?.getSharedPreferences("runtick.cookies", Context.MODE_PRIVATE)
+    private val cache = LinkedHashMap<String, String>()
+
+    init {
+        synchronized(this) {
+            prefs?.all?.forEach { (key, value) -> if (value is String) cache[key] = value }
+        }
+    }
+
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        synchronized(this) {
+            for (cookie in cookies) {
+                cache["${cookie.name}|${cookie.domain}|${cookie.path}"] = cookie.toString()
+            }
+            persist()
+        }
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> = synchronized(this) {
+        cache.values.mapNotNull { raw ->
+            runCatching { Cookie.parse(url, raw) }.getOrNull()
+        }.filter { it.matches(url) }
+    }
+
+    fun clear() {
+        synchronized(this) {
+            cache.clear()
+            prefs?.edit()?.clear()?.apply()
+        }
+    }
+
+    private fun persist() {
+        val editor = prefs?.edit() ?: return
+        editor.clear()
+        cache.forEach { (key, value) -> editor.putString(key, value) }
+        editor.apply()
+    }
+}
