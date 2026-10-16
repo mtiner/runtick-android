@@ -25,7 +25,7 @@ class ReactionMotion(context: Context) : SensorEventListener {
         val rotation = manager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return
         if (!manager.registerListener(this, rotation, 10000) || !manager.registerListener(this, acceleration, 10000)) { stop(); return }
         delay(2200)
-        preflight = if (!received) "unavailable" else if (gate.ready) "ready" else "unstable"
+        preflight = if (!received) "unavailable" else if (gate.ready && gate.movedAt == null) "ready" else "unstable"
     }
     override fun onSensorChanged(event: SensorEvent) {
         val magnitude = sqrt(event.values.take(3).sumOf { it.toDouble() * it.toDouble() })
