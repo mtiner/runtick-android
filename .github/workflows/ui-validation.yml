@@ -30,8 +30,8 @@ jobs:
           disable-animations: true
           script: |
             adb shell cmd overlay enable com.android.internal.display.cutout.emulation.tall
-            ./gradlew connectedDebugAndroidTest --no-daemon || { adb pull /sdcard/Android/data/cc.runtick.app/files screenshots || true; exit 1; }
-            adb pull /sdcard/Android/data/cc.runtick.app/files screenshots
+            ./gradlew connectedDebugAndroidTest --no-daemon || { adb pull /sdcard/Pictures/RunTickQA screenshots || true; exit 1; }
+            adb pull /sdcard/Pictures/RunTickQA screenshots
       - uses: actions/upload-artifact@v4
         if: always()
         with:

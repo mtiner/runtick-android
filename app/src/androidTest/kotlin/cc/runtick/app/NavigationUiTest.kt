@@ -1,5 +1,7 @@
 package cc.runtick.app
 
+import android.content.ContentValues
+import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.content.Context
 import android.media.AudioManager
@@ -55,9 +57,17 @@ class NavigationUiTest {
     @After fun cleanup() { server.shutdown() }
     private fun screenshot(name: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val file = File(instrumentation.targetContext.getExternalFilesDir(null), "$name.png")
+        // UTP uninstalls the tested APK, so external app files are removed after tests.
+        // Public MediaStore images survive teardown for the CI artifact collector.
+        val resolver = instrumentation.targetContext.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/RunTickQA")
+        }
+        val uri = requireNotNull(resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
         val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
-        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        requireNotNull(resolver.openOutputStream(uri)).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
     }
     @Test fun aboutUsesSystemBackAndAvoidsStatusBarAndCutout() {
