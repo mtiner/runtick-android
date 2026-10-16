@@ -23,6 +23,7 @@ import cc.runtick.app.services.AppModel
 import cc.runtick.app.ui.LaunchContainer
 import cc.runtick.app.ui.RTUpdateDialog
 import cc.runtick.app.ui.RT
+import cc.runtick.app.ui.RunTickTheme
 import cc.runtick.app.ui.RootView
 
 /** AppModel 的 ViewModel 容器：随 Activity 重建保留会话状态。 */
@@ -65,13 +66,15 @@ class MainActivity : ComponentActivity() {
             val model = holder.model
 
             // 锁浅色：背景由 RTBackdrop 提供，Surface 仅作底色。
-            Surface(modifier = Modifier.fillMaxSize(), color = RT.background) {
-                KeepScreenOnWhileInRoom(model)
-                LaunchContainer(model = model) {
-                    RootView(model = model)
+            RunTickTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = RT.background) {
+                    KeepScreenOnWhileInRoom(model)
+                    LaunchContainer(model = model) {
+                        RootView(model = model)
+                    }
+                    // App 更新弹窗：全局置顶，引导页之上也可见。
+                    RTUpdateDialog(model = model)
                 }
-                // App 更新弹窗：全局置顶，引导页之上也可见。
-                RTUpdateDialog(model = model)
             }
         }
     }

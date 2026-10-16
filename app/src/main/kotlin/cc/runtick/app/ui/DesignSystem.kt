@@ -83,6 +83,33 @@ object RT {
     val background = Color(0xFFF7FBF9)
 }
 
+/** 固定品牌色，避免系统动态配色或 Material 默认紫色覆盖交互组件。 */
+@Composable
+fun RunTickTheme(content: @Composable () -> Unit) {
+    androidx.compose.material3.MaterialTheme(
+        colorScheme = androidx.compose.material3.lightColorScheme(
+            primary = RT.deep,
+            onPrimary = RT.ink,
+            primaryContainer = Color(0xFFD4F5EF),
+            onPrimaryContainer = RT.ink,
+            secondary = RT.deep,
+            onSecondary = RT.ink,
+            secondaryContainer = Color(0xFFE5F3EF),
+            onSecondaryContainer = RT.ink,
+            tertiary = RT.ink,
+            background = RT.background,
+            onBackground = RT.ink,
+            surface = RT.background,
+            onSurface = RT.ink,
+            surfaceVariant = Color(0xFFE5F3EF),
+            onSurfaceVariant = RT.muted,
+            outline = RT.muted,
+            outlineVariant = Color(0xFFC9DED8)
+        ),
+        content = content
+    )
+}
+
 /** 系统关闭动画（缩放为 0）时跳过进场/交互动画，对应 iOS Reduce Motion。 */
 @Composable
 fun rememberReduceMotion(): Boolean {
@@ -559,40 +586,14 @@ fun RTCodeInput(
 /** 品牌图标：112dp 圆角 28 方块，渐变底 + 简化停表图形。 */
 @Composable
 fun RTBrandIcon(modifier: Modifier = Modifier, size: Dp = 112.dp) {
-    Box(
+    androidx.compose.foundation.Image(
+        painter = androidx.compose.ui.res.painterResource(cc.runtick.app.R.drawable.runtick_brand_icon),
+        contentDescription = "RunTick 燃刻",
         modifier = modifier
             .size(size)
             .shadow(24.dp, RoundedCornerShape(28.dp), spotColor = RT.deep.copy(alpha = 0.16f))
             .clip(RoundedCornerShape(28.dp))
-            .background(Brush.verticalGradient(listOf(RT.aqua, RT.deep))),
-        contentAlignment = Alignment.Center
-    ) {
-        // 简化停表：顶部按钮 + 外环 + 表针。
-        androidx.compose.foundation.Canvas(Modifier.size(size * 0.62f)) {
-            val stroke = size.toPx() * 0.045f
-            val white = Color.White.copy(alpha = 0.95f)
-            // 顶部按钮
-            drawRoundRect(
-                color = white,
-                topLeft = Offset(this.size.width / 2 - stroke * 1.6f, -stroke * 2.2f),
-                size = androidx.compose.ui.geometry.Size(stroke * 3.2f, stroke * 2.4f),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(stroke)
-            )
-            // 外环
-            drawCircle(color = white, radius = this.size.minDimension / 2 - stroke, style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke))
-            // 表针：指向 1 点钟方向
-            val center = Offset(this.size.width / 2, this.size.height / 2)
-            val radius = this.size.minDimension / 2 - stroke * 2.4f
-            drawLine(
-                color = white,
-                start = center,
-                end = center + Offset(radius * 0.5f, -radius * 0.5f * 1.2f),
-                strokeWidth = stroke * 1.1f,
-                cap = androidx.compose.ui.graphics.StrokeCap.Round
-            )
-            drawCircle(color = white, radius = stroke * 1.1f, center = center)
-        }
-    }
+    )
 }
 
 /** 秒数等宽数字格式化（%.3f）。 */
