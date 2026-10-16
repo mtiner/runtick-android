@@ -36,7 +36,7 @@ class NavigationUiTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 if (request.method == "POST" && request.path == "/api/rooms/1234/role") {
                     return MockResponse().setHeader("Content-Type", "application/json")
-                        .setBody("""{"ok":true,"data":{}}""").setBodyDelay(2, TimeUnit.SECONDS)
+                        .setBody("""{"ok":true,"data":{}}""").setHeadersDelay(2, TimeUnit.SECONDS)
                 }
                 if (request.method == "POST" && request.path == "/api/rooms/1234/races/auto-plan/events") {
                     val at = AppJson.parseToJsonElement(request.body.readUtf8()).jsonObject["at"]!!
