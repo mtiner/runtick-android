@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cc.runtick.app.services.AppModel
 import cc.runtick.app.ui.LaunchContainer
+import cc.runtick.app.ui.RTUpdateDialog
 import cc.runtick.app.ui.RT
 import cc.runtick.app.ui.RootView
 
@@ -69,6 +70,8 @@ class MainActivity : ComponentActivity() {
                 LaunchContainer(model = model) {
                     RootView(model = model)
                 }
+                // App 更新弹窗：全局置顶，引导页之上也可见。
+                RTUpdateDialog(model = model)
             }
         }
     }

@@ -1,8 +1,12 @@
 package cc.runtick.app.services
 
 import android.content.Context
+import cc.runtick.app.BuildConfig
 import cc.runtick.app.core.AppConfiguration
 import cc.runtick.app.core.AppJson
+import cc.runtick.app.core.UpdateDecision
+import cc.runtick.app.core.decodeVersionInfo
+import cc.runtick.app.core.evaluateUpdate
 import cc.runtick.app.core.ClientError
 import cc.runtick.app.core.ClockMapping
 import cc.runtick.app.core.ClockResponse
@@ -91,6 +95,12 @@ class AppModel(private val appContext: Context, store: PendingStore? = null) {
         get() = _error.value
         set(value) { _error.value = value }
     val errorFlow: StateFlow<String> get() = _error
+
+    private val _update = MutableStateFlow<UpdateDecision?>(null)
+    var update: UpdateDecision?
+        get() = _update.value
+        set(value) { _update.value = value }
+    val updateFlow: StateFlow<UpdateDecision?> get() = _update
 
     private val _room = MutableStateFlow<RoomModel?>(null)
     var room: RoomModel?
@@ -230,6 +240,37 @@ class AppModel(private val appContext: Context, store: PendingStore? = null) {
         user = null
         lobbyReady = false
         api?.clearCookies()
+    }
+
+    /**
+     * 冷启动检查 App 更新：24 小时节流；网络失败或解析失败一律静默忽略，
+     * 仅在服务器版本更高时把判定结果写入 updateFlow 供弹窗展示。
+     */
+    suspend fun checkAppUpdate() {
+        val client = api ?: return
+        val prefs = appContext.getSharedPreferences("runtick.update", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("lastCheckAt", 0L) < UPDATE_CHECK_INTERVAL_MS) return
+        update = try {
+            val info = client.request("/api/app/version?platform=android") { decodeVersionInfo(it) }
+            // 仅在请求成功后写入节流时间戳，避免网络故障后 24 小时内无法重试
+            prefs.edit().putLong("lastCheckAt", now).apply()
+            evaluateUpdate(BuildConfig.VERSION_CODE, info)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    /** 关闭非强制更新弹窗。 */
+    fun dismissUpdate() {
+        update = null
+    }
+
+    companion object {
+        /** 更新检查节流间隔：24 小时。 */
+        private const val UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L
     }
 }
 

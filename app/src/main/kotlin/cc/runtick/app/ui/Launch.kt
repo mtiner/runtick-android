@@ -57,6 +57,8 @@ fun LaunchContainer(model: cc.runtick.app.services.AppModel, content: @Composabl
         kotlinx.coroutines.delay(1300)
         launching = false
         restoration.await()
+        // 进入主界面后检查 App 更新（24 小时节流，失败静默）。
+        model.checkAppUpdate()
     }
 }
 
