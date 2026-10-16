@@ -21,8 +21,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # ubuntu-latest 已预装 Android SDK（/usr/local/lib/android/sdk，含平台包且 licenses 已接受）
 
       - name: Decode signing keystore
         if: startsWith(github.ref, 'refs/tags/v')
