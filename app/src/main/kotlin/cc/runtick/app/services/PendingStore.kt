@@ -15,6 +15,7 @@ interface PendingStore {
     fun load(key: String): PendingEvent?
     fun delete(key: String)
     fun keysWithPrefix(prefix: String): List<String>
+    fun deleteIfUnchanged(key: String, event: PendingEvent) { if (load(key) == event) delete(key) }
 }
 
 /** 内存实现（测试用）。 */
@@ -30,6 +31,8 @@ class MemoryPendingStore : PendingStore {
     override fun delete(key: String) {
         map.remove(key)
     }
+
+    override fun deleteIfUnchanged(key: String, event: PendingEvent) { map.remove(key, event) }
 
     override fun keysWithPrefix(prefix: String): List<String> =
         map.keys.filter { it.startsWith(prefix) }

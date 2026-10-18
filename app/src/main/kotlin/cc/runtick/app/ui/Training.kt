@@ -52,12 +52,50 @@ import java.util.UUID
     val prefs = remember { context.getSharedPreferences("runtick.room", Context.MODE_PRIVATE) }
     var stages by remember { mutableStateOf(runCatching { AppJson.decodeFromString(ListSerializer(StageDelay.serializer()), prefs.getString("starter", "")!!) }.getOrNull()?.takeIf { it.size == 3 } ?.map { it.normalized() } ?: StageDelay.defaults()) }
     var running by remember { mutableStateOf(false) }; var cue by remember { mutableStateOf("") }
+    var generation by remember { mutableStateOf(UUID.randomUUID()) }
+    var deadline by remember { mutableStateOf<Double?>(null) }
+    var now by remember { mutableStateOf(MonotonicClock.now()) }
+    var volumeWarning by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<ReactionResult?>(null) }; var error by remember { mutableStateOf("") }
     var showHistory by remember { mutableStateOf(false) }
     if (showHistory) { SoloHistoryView(api, onBack = { showHistory = false }); return }
     var task by remember { mutableStateOf<Job?>(null) }
     val audio = remember { StarterAudio(context) }; val motion = remember { ReactionMotion(context) }
-    fun stop() { task?.cancel(); audio.stop(); motion.end(); running = false }
+    fun stop() { generation = UUID.randomUUID(); task?.cancel(); audio.stop(); motion.end(); running = false; deadline = null; volumeWarning = false }
+    fun start(allowReducedVolume: Boolean = false) {
+        if (running || stages.size != 3 || stages.any { !it.valid }) return
+        if (!allowReducedVolume && AudioReadiness.volumePercent(context) < 100) { volumeWarning = true; return }
+        volumeWarning = false
+        running = true; result = null; error = ""; cue = "请保持手机与起跑器稳定…"
+        val saved = stages.map { it.copy() }; val id = UUID.randomUUID().toString()
+        val token = UUID.randomUUID(); generation = token
+        prefs.edit().putString("starter", AppJson.encodeToString(ListSerializer(StageDelay.serializer()), saved)).apply()
+        task = scope.launch {
+            try {
+                motion.prepare(saved[0].reactionEnabled)
+                ensureActive()
+                if (generation != token) return@launch
+                val (at, _) = audio.fire(MonotonicClock.now(), saved,
+                    onCue = { if (generation == token) cue = it },
+                    onDeadline = { if (generation == token) deadline = it })
+                if (generation != token) return@launch
+                val firedAt = System.currentTimeMillis()
+                motion.gun(at) { value ->
+                    if (generation == token) result = value
+                    val body = buildJsonObject { put("id", id); put("firedAt", firedAt); put("athleteId", user.id); put("settings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), saved)); put("reactionMs", value.reactionMs?.let { JsonPrimitive(it) } ?: JsonNull); put("reactionStatus", value.reactionStatus) }
+                    TrainingSync.enqueue(context, api, user.id, "/api/starts", body, id)
+                    scope.launch {
+                        try {
+                            TrainingSync.send(context, api, user.id, "/api/starts", body, id)
+                        } catch (e: CancellationException) { throw e }
+                        catch (_: Exception) { error = "记录尚未同步，已保留在此设备上。请联网后重试。" }
+                    }
+                }
+            } catch (_: CancellationException) {}
+            catch (_: Exception) { if (generation == token) { error = "发令未完成，请检查声音输出后重试。"; stop() } }
+        }
+    }
+    LaunchedEffect(deadline) { while (deadline != null) { now = MonotonicClock.now(); delay(100) } }
     val view = LocalView.current
     DisposableEffect(running) { val previous = view.keepScreenOn; if (running) view.keepScreenOn = true; onDispose { view.keepScreenOn = previous } }
     val lifecycle = LocalLifecycleOwner.current
@@ -73,38 +111,26 @@ import java.util.UUID
             if (!running) {
                 StageSettings(stages, onChange = { stages = it })
                 Text("手机贴靠或固定在起跑器上并保持稳定。反应时为设备运动估算，非专业起跑器计时；小于 100 ms 标注抢跑。", fontSize = 12.sp, color = RT.muted)
-                RTButton(onClick = {
-                    if (!running) {
-                        running = true; result = null; error = ""; cue = "请保持手机与起跑器稳定…"
-                        val saved = stages.toList(); val id = UUID.randomUUID().toString()
-                        prefs.edit().putString("starter", AppJson.encodeToString(ListSerializer(StageDelay.serializer()), saved)).apply()
-                        task = scope.launch {
-                            try {
-                                motion.prepare(saved[0].reactionEnabled)
-                                val (at, _) = audio.fire(MonotonicClock.now(), saved, onCue = { cue = it })
-                                val firedAt = System.currentTimeMillis()
-                                motion.gun(at) { value ->
-                                    result = value
-                                    scope.launch {
-                                        try {
-                                            val body = buildJsonObject { put("id", id); put("firedAt", firedAt); put("athleteId", user.id); put("settings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), saved)); put("reactionMs", value.reactionMs?.let { JsonPrimitive(it) } ?: JsonNull); put("reactionStatus", value.reactionStatus) }
-                                            TrainingSync.send(context, api, user.id, "/api/starts", body, id)
-                                        } catch (e: Exception) { error = "记录已保留，联网后重试：${e.message}" }
-                                    }
-                                }
-                            } catch (_: CancellationException) {} catch (e: Exception) { error = e.message ?: "发令失败"; stop() }
-                        }
-                    }
-                }, secondary = false) { RTButtonText("确认设置，开始发令") }
+                AudioPreparationCard()
+                RTButton(onClick = { start() }, secondary = false) { RTButtonText("确认设置，开始发令") }
             } else {
                 Text(cue, fontSize = 34.sp, color = RT.ink)
+                deadline?.let { Text(kotlin.math.ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 86.sp, color = RT.ink) }
                 result?.let { if (it.reactionStatus == "false_start") RTChip("抢跑", lemon = true); Text(reactionText(it.reactionMs, it.reactionStatus), color = RT.ink) }
                 RTButton(onClick = { stop() }) { RTButtonInkText("结束本轮") }
             }
         }
         RTButton(onClick = { showHistory = true }) { RTButtonInkText("单人起跑记录") }
+        RTButton(onClick = { scope.launch { TrainingSync.retry(context, api, user.id) } }) { RTButtonInkText("重试同步本机记录") }
     }
-    RTErrorAlert(error, enabled = true)
+    if (volumeWarning) AlertDialog(
+        onDismissRequest = { volumeWarning = false },
+        title = { Text("媒体音量未调至最大") },
+        text = { Text("建议调高媒体音量，以便听到口令和枪声。也可以按当前音量继续。") },
+        confirmButton = { TextButton(onClick = { start(allowReducedVolume = true) }) { Text("仍然开始") } },
+        dismissButton = { TextButton(onClick = { volumeWarning = false }) { Text("先调整音量") } }
+    )
+    RTErrorAlert(error, enabled = !volumeWarning)
 }
 
 @Composable fun AboutView(onBack: () -> Unit) {

@@ -79,7 +79,7 @@ fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
     var showSolo by remember { mutableStateOf(false) }
     if (showSolo) { SoloHistoryView(api, onBack = { showSolo = false }); return }
     var data by remember { mutableStateOf<HistoryData?>(null) }
-    var athleteId by remember { mutableStateOf(0L) }
+    var athleteId by remember { mutableStateOf(user.id) }
     var distance by remember { mutableStateOf(0) }
     var sort by remember { mutableStateOf("date-desc") }
     var offset by remember { mutableStateOf(0) }
@@ -105,7 +105,8 @@ fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
                 AppJson.decodeFromJsonElement(HistoryData.serializer(), element)
             }
             data = result
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) {
             error = e.message ?: "加载成绩未完成"
         } finally {
             loading = false
@@ -187,36 +188,29 @@ fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         val dateFormat = remember { SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.getDefault()) }
                         current.records.forEach { record ->
-                            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Column {
+                            Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Text("${record.distance} 米", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = RT.ink)
+                                Text(String.format("%.3f 秒", record.elapsedMs / 1000.0), fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = RT.ink)
+                                Text(dateFormat.format(Date(record.performedAt.toLong())), fontSize = 12.sp, color = RT.muted)
+                                if (record.reactionStatus != null) Text(cc.runtick.app.core.reactionText(record.reactionMs, record.reactionStatus), fontSize = 12.sp, color = RT.muted)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     if (record.reactionStatus == "false_start") RTChip("抢跑", lemon = true)
-                                    Text(cc.runtick.app.core.reactionText(record.reactionMs, record.reactionStatus), fontSize = 12.sp, color = RT.muted)
-                                    Text("${record.distance} 米", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = RT.ink)
-                                    Text(
-                                        dateFormat.format(Date(record.performedAt.toLong())),
-                                        fontSize = 12.sp, color = RT.muted
-                                    )
+                                    if (record.isPb) RTChip("PB", lemon = true)
                                 }
-                                Spacer(Modifier.weight(1f))
-                                Text(
-                                    String.format("%.3f 秒", record.elapsedMs / 1000.0),
-                                    fontSize = 15.sp, color = RT.ink
-                                )
-                                if (record.isPb) {
-                                    Spacer(Modifier.padding(start = 8.dp))
-                                    RTChip("PB", lemon = true)
-                                }
+                                androidx.compose.material3.HorizontalDivider(color = RT.ink.copy(alpha = 0.08f))
                             }
                         }
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     RTButton(
+                        modifier = Modifier.weight(1f),
                         onClick = { offset = (offset - 50).coerceAtLeast(0) },
                         enabled = offset > 0 && !loading
                     ) { RTButtonInkText("上一页") }
                     Spacer(Modifier.weight(1f))
                     RTButton(
+                        modifier = Modifier.weight(1f),
                         onClick = { offset += 50 },
                         enabled = current.hasMore && !loading
                     ) { RTButtonInkText("下一页") }

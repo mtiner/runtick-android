@@ -33,6 +33,11 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -94,12 +99,26 @@ fun RootView(model: AppModel) {
             model.room?.interrupt()
         } else if (model.user != null && !model.loading) {
             try { model.openCurrentRoom() }
+            catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 val target = model.room
                 if (target != null) target.error = e.message ?: "操作未完成"
                 else model.error = e.message ?: "操作未完成"
             }
         }
+    }
+
+    val lifecycle = LocalLifecycleOwner.current
+    DisposableEffect(lifecycle, model) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> { model.room?.resume(); model.scheduleSync() }
+                Lifecycle.Event.ON_PAUSE -> model.room?.interrupt()
+                else -> Unit
+            }
+        }
+        lifecycle.lifecycle.addObserver(observer)
+        onDispose { lifecycle.lifecycle.removeObserver(observer) }
     }
 
     if (!onboarded) {
@@ -131,11 +150,13 @@ fun RootView(model: AppModel) {
                             api = model.api,
                             user = user!!,
                             leave = {
+                                val target = model.room
                                 scope.launch {
                                     model.perform {
-                                        room!!.error = ""
+                                        target?.error = ""
                                         try { model.leave() }
-                                        catch (e: Exception) { room!!.error = e.message ?: "退出房间未完成" }
+                                        catch (e: CancellationException) { throw e }
+                                        catch (e: Exception) { target?.error = e.message ?: "退出房间未完成" }
                                     }
                                 }
                             }
@@ -251,7 +272,7 @@ fun LoginView(model: AppModel, onHelp: () -> Unit = {}) {
                     value = password,
                     onValueChange = { password = it },
                     placeholder = "请输入密码",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = PasswordVisualTransformation()
                 )
             }
@@ -333,8 +354,8 @@ fun LobbyView(model: AppModel, onHelp: () -> Unit = {}) {
             ) { RTButtonText("加入房间") }
         }
         if (!lobbyReady) {
-            RTButton(onClick = { scope.launch { model.perform { model.leave() } } }) {
-                RTButtonInkText("重试退出旧房间")
+            RTButton(onClick = { scope.launch { model.perform { model.openCurrentRoom(); model.scheduleSync() } } }) {
+                RTButtonInkText("重试恢复房间")
             }
         }
     }
@@ -386,9 +407,10 @@ fun GuideView(
                 val sm = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
                 val gyro = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null
                 val accel = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null
-                capabilities = "陀螺仪：${if (gyro) "可用" else "不支持"} · 加速度计：${if (accel) "可用" else "不支持"}\n系统会话存储 · 房间内自动常亮"
+                capabilities = "陀螺仪：${if (gyro) "可用" else "不支持"} · 加速度计：${if (accel) "可用" else "不支持"}\n登录状态会保留 · 房间内自动保持屏幕点亮"
             }) { RTButtonInkText("检查设备能力") }
         }
+        NetworkPreparationCard()
         AudioPreparationCard(modifier = Modifier.rtEntrance(140))
         RTButton(
             onClick = onProceed,
@@ -410,6 +432,9 @@ fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout:
     val scope = rememberCoroutineScope()
     val loading by model.loadingFlow.collectAsState()
 
+    val syncNotice by model.syncNoticeFlow.collectAsState()
+    val syncingRecords by model.syncingRecordsFlow.collectAsState()
+    LaunchedEffect(user.id) { model.scheduleSync() }
     RTPage {
         RTBrand(showHelp = true, onHelp = onHelp, modifier = Modifier.rtEntrance(0))
         RTHero(badge = "个人中心", title = "我的", modifier = Modifier.rtEntrance(40))
@@ -439,6 +464,10 @@ fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout:
             RTButtonInkText("历史成绩")
             Spacer(Modifier.weight(1f))
             Icon(Icons.AutoMirrored.Filled.ArrowRight, contentDescription = null, tint = RT.ink, modifier = Modifier.size(18.dp))
+        }
+        if (syncNotice.isNotEmpty()) RTCard(title = "训练记录同步") { Text(syncNotice, color = RT.muted) }
+        RTButton(onClick = { model.scheduleSync(showConfirmation = true) }, enabled = !syncingRecords) {
+            RTButtonInkText(if (syncingRecords) "正在同步…" else "同步本机训练记录")
         }
         RTButton(onClick = onAbout) { RTButtonInkText("关于 RunTick") }
         RTButton(

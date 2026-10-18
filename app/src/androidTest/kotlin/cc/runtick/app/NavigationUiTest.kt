@@ -134,7 +134,7 @@ class NavigationUiTest {
         try {
             compose.setContent { RunTickTheme { RTSafeArea { RoomView(model, api, User(1, "test"), leave = {}) } } }
             compose.onNodeWithText("开始记录").performScrollTo().performClick()
-            compose.onNodeWithText("已确认声音，开始记录").performScrollTo().performClick()
+            compose.onNodeWithText("确认并开始记录").performScrollTo().performClick()
             compose.waitUntil(10000) { model.race?.active == true }
             compose.waitUntil(10000) {
                 runCatching { compose.onNodeWithText("按住屏幕，等待冲线").assertIsDisplayed(); true }.getOrDefault(false)
@@ -142,6 +142,8 @@ class NavigationUiTest {
             screenshot("finish-recording-cutout")
             pressBack()
             compose.onNodeWithText("按住屏幕，等待冲线").assertDoesNotExist()
+            compose.onNodeWithText("进入记录页").performScrollTo().performClick()
+            compose.onNodeWithText("按住屏幕，等待冲线").assertIsDisplayed()
         } finally { screenshot("finish-final-state"); compose.runOnIdle { model.stop() } }
     }
     @Test fun startPhoneAutomaticallyPlaysTheConfirmedPlan() {
@@ -208,6 +210,38 @@ class NavigationUiTest {
             compose.waitUntil(10000) { done }
             compose.runOnIdle { assertNull(failure) }
         } finally { scope.cancel() }
+    }
+
+    @Test fun largeTextRecordingHeaderDoesNotOverlapAndExitNeedsConfirmation() {
+        val api = APIClient(server.url("/").toString())
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        lateinit var model: RoomModel
+        var exits = 0
+        compose.runOnIdle {
+            model = RoomModel(context, api, User(2, "starter"), "1234")
+            model.clock = ClockMapping(0.0, 1.0, 2.0, MonotonicClock.now())
+            model.update(Race("large-text", "ready", 1.0, startUserId = 2, finishUserId = 1))
+        }
+        try {
+            compose.setContent {
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density, 2f)) {
+                    RunTickTheme { RTSafeArea { RoomView(model, api, User(2, "starter"), leave = { exits++ }) } }
+                }
+            }
+            compose.onNodeWithTag("recording.return").assertIsDisplayed()
+            val title = compose.onNodeWithTag("recording.roomLabel").fetchSemanticsNode().boundsInRoot
+            val back = compose.onNodeWithTag("recording.return").fetchSemanticsNode().boundsInRoot
+            assertFalse("Title must not overlap return button", title.overlaps(back))
+            screenshot("recording-large-text")
+            compose.onNodeWithTag("recording.return").performClick()
+            compose.onNodeWithText("退出房间").performScrollTo().performClick()
+            compose.onNodeWithText("退出当前房间？").assertIsDisplayed()
+            compose.runOnIdle { assertEquals(0, exits) }
+            compose.onNodeWithText("继续训练").performClick()
+            compose.onNodeWithText("进入记录页").performScrollTo().performClick()
+            compose.onNodeWithTag("recording.return").assertIsDisplayed()
+        } finally { compose.runOnIdle { model.stop() } }
     }
 
 }

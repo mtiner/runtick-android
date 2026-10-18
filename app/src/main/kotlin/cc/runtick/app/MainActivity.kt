@@ -34,6 +34,7 @@ import cc.runtick.app.ui.RootView
 /** AppModel 的 ViewModel 容器：随 Activity 重建保留会话状态。 */
 class AppHolder(appContext: Context) : ViewModel() {
     val model = AppModel(appContext)
+    override fun onCleared() { model.close() }
 }
 
 /**

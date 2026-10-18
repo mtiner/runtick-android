@@ -32,6 +32,7 @@ import cc.runtick.app.network.APIClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -65,7 +66,15 @@ private fun eventBody(kind: String, at: Double, uncertaintyMs: Double): JsonObje
  * 主线程共享状态：登录、房间进出与待补交事件重放。
  * 字段保留可直接读取的 var，同时以 StateFlow 暴露给 Compose。
  */
-class AppModel(private val appContext: Context, store: PendingStore? = null) {
+class AppModel(private val appContext: Context, store: PendingStore? = null, private val suppliedClient: APIClient? = null) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var syncTask: Job? = null
+    private var syncGeneration = UUID.randomUUID()
+    private var resolvingRoom = false
+    private val _syncNotice = MutableStateFlow("")
+    val syncNoticeFlow: StateFlow<String> get() = _syncNotice
+    private val _syncingRecords = MutableStateFlow(false)
+    val syncingRecordsFlow: StateFlow<Boolean> get() = _syncingRecords
 
     private val pendingStore: PendingStore = store ?: SharedPreferencesPendingStore(appContext)
 
@@ -108,11 +117,10 @@ class AppModel(private val appContext: Context, store: PendingStore? = null) {
         set(value) { _room.value = value }
     val roomFlow: StateFlow<RoomModel?> get() = _room
 
-    /** 创建（或重建）API 客户端并挂上 401 回调。 */
-    private fun configure() {
-        api = APIClient(AppConfiguration.SERVER_URL, appContext).also { client ->
-            client.unauthorized = { clearSession() }
-        }
+    private fun configure(reset: Boolean = false) {
+        if (api == null || reset) api = suppliedClient ?: APIClient(AppConfiguration.SERVER_URL, appContext)
+        user = api?.savedUser
+        api?.let { client -> client.unauthorized = { if (api === client) clearSession() } }
     }
 
     /** 串行化用户操作：loading 期间直接忽略新请求。 */
@@ -131,31 +139,35 @@ class AppModel(private val appContext: Context, store: PendingStore? = null) {
         }
     }
 
-    /** 启动时恢复会话：/auth/me 成功后顺带补交 pending 并退出旧房间。 */
+    /** 启动时恢复会话及当前房间，后台补交本机记录。 */
     suspend fun restore() = perform {
         configure()
         val client = api ?: return@perform
         try {
             user = client.request("/api/auth/me") { decodeUser(it) }
-            leave()
+            user?.let { client.remember(it) }
+            openCurrentRoom()
+            scheduleSync()
         } catch (e: ClientError) {
             // 全新安装没有已保存会话属正常情况，不算连接失败
             if (e.status != 401) throw e
         }
     }
 
-    /** 登录：成功后补交 pending 并退出旧房间。 */
+    /** 登录后恢复当前房间，不主动退出。 */
     suspend fun login(id: String, password: String) {
         if (id.isBlank() || password.isEmpty()) {
             throw ClientError(0, null, "请输入用户 ID 和密码")
         }
-        configure()
+        configure(reset = true)
         val client = api!!
         user = client.request(
             "/api/auth/login", "POST",
             buildJsonObject { put("userId", id); put("password", password) },
         ) { decodeUser(it) }
-        leave()
+        user?.let { client.remember(it) }
+        openCurrentRoom()
+        scheduleSync()
     }
 
     /** 登出：通知服务器、清 Cookie、停房间。 */
@@ -170,14 +182,14 @@ class AppModel(private val appContext: Context, store: PendingStore? = null) {
         clearSession()
     }
 
-    /** 进入房间：code 为 null 时创建，否则加入 4 位数字房间。进入前先退出旧房间（补交 pending）。 */
+    /** 进入房间：code 为 null 时创建，否则加入 4 位数字房间。恢复房间状态后才允许创建或加入。 */
     suspend fun enter(code: String? = null) {
         val client = api ?: return
         val currentUser = user ?: return
         if (code != null && (code.length != 4 || code.any { !it.isDigit() })) {
             throw ClientError(0, null, "房间号必须为 4 位数字")
         }
-        leave()
+        if (!lobbyReady) throw ClientError(0, null, "暂时无法确认房间状态，请重试恢复房间。")
         val path = if (code != null) "/api/rooms/$code/join" else "/api/rooms"
         val roomData = client.request(path, "POST") { decodeRoom(it) }
         val model = RoomModel(appContext, client, currentUser, roomData.code)
@@ -186,61 +198,83 @@ class AppModel(private val appContext: Context, store: PendingStore? = null) {
         model.start()
     }
 
-    /** 退出房间：先补交所有 pending（失败则不退出），再通知服务器。 */
+    /** 退出成员关系与后台同步分开处理，失败记录继续留在本机。 */
     suspend fun leave() {
         val client = api ?: return
-        replayPending()
         client.request("/api/rooms/leave", "POST") { }
-        room?.stop()
-        room = null
-        lobbyReady = true
+        room?.stop(); room = null; lobbyReady = true
+        scheduleSync()
     }
 
-    /** 后台解析当前房间：有房间且未打开时打开，无房间则离开。 */
     suspend fun openCurrentRoom() {
         val client = api ?: return
         val currentUser = user ?: return
-        val current = client.request("/api/rooms/current") { decodeCurrentRoomCode(it) }
-        if (current == null) {
-            leave()
-            return
-        }
-        if (room?.code == current) {
-            room?.resume()
-            return
-        }
-        room?.stop()
-        val model = RoomModel(appContext, client, currentUser, current)
-        room = model
-        lobbyReady = false
-        model.start()
+        if (resolvingRoom) return
+        resolvingRoom = true
+        try {
+            val current = client.request("/api/rooms/current") { decodeCurrentRoomCode(it) }
+            currentCoroutineContext().ensureActive()
+            if (api !== client || user?.id != currentUser.id) return
+            if (current == null) {
+                room?.stop(); room = null; lobbyReady = true
+            } else if (room?.code == current) {
+                room?.resume()
+            } else {
+                room?.stop()
+                room = RoomModel(appContext, client, currentUser, current, pendingStore).also { it.start() }
+                lobbyReady = false
+            }
+        } finally { resolvingRoom = false }
     }
 
-    /** 遍历本用户全部 pending key，逐个补交成功后删除。 */
+    fun scheduleSync(showConfirmation: Boolean = false) {
+        if (syncTask?.isActive == true || user == null) return
+        val token = UUID.randomUUID(); syncGeneration = token
+        _syncingRecords.value = true
+        syncTask = scope.launch {
+            try {
+                replayPending()
+                if (syncGeneration == token && showConfirmation && _syncNotice.value.isEmpty() && user != null)
+                    _syncNotice.value = "本机训练记录已同步。"
+            } finally { if (syncGeneration == token) _syncingRecords.value = false }
+        }
+    }
+
     suspend fun replayPending() {
         val client = api ?: return
         val currentUser = user ?: return
-        val prefix = "pending:${AppConfiguration.SERVER_URL.trimEnd('/')}:${currentUser.id}:"
+        TrainingSync.retry(appContext, client, currentUser.id)
+        val prefix = "pending:${client.baseUrl.trimEnd('/')}:${currentUser.id}:"
         for (key in pendingStore.keysWithPrefix(prefix)) {
+            currentCoroutineContext().ensureActive()
+            if (api !== client || user?.id != currentUser.id) return
             val pending = pendingStore.load(key) ?: continue
             if (pending.userId != currentUser.id) continue
-            val event = pending.event
-            client.request(
-                "/api/rooms/${pending.code}/races/${pending.raceId}/events", "POST",
-                eventBody(event.kind, event.at, event.uncertaintyMs),
-            ) { decodeRace(it) }
-            pendingStore.delete(key)
+            try {
+                val event = pending.event
+                client.request("/api/rooms/${pending.code}/races/${pending.raceId}/events", "POST",
+                    eventBody(event.kind, event.at, event.uncertaintyMs)) { decodeRace(it) }
+                pendingStore.deleteIfUnchanged(key, pending)
+                if (room?.pending == pending) room?.pending = null
+            } catch (e: CancellationException) { throw e }
+            catch (e: Throwable) {
+                val status = (e as? ClientError)?.status ?: 0
+                if (status == 0 || status == 401 || status >= 500) break
+            }
         }
+        if (api !== client || user?.id != currentUser.id) return
+        val remaining = pendingStore.keysWithPrefix(prefix).size + TrainingSync.count(appContext, client, currentUser.id)
+        _syncNotice.value = if (remaining == 0) "" else "有 $remaining 条训练记录尚未同步，已保留在此设备上。请联网后重试。"
     }
 
-    /** 清空本地会话（401 或登出）。 */
     fun clearSession() {
-        room?.stop()
-        room = null
-        user = null
-        lobbyReady = false
+        syncGeneration = UUID.randomUUID(); syncTask?.cancel(); syncTask = null
+        _syncNotice.value = ""; _syncingRecords.value = false
+        room?.stop(); room = null; user = null; lobbyReady = false
         api?.clearCookies()
     }
+
+    fun close() { room?.stop(); syncTask?.cancel(); scope.cancel() }
 
     /**
      * 冷启动检查 App 更新：24 小时节流；网络失败或解析失败一律静默忽略，
@@ -295,6 +329,8 @@ class RoomModel(
     private val pendingKey = "pending:${api.baseUrl.trimEnd('/')}:${user.id}:$code"
     private val roleSelection = RoleSelection()
     private var eventClock: ClockMapping? = null
+    private var recordingClock: ClockMapping? = null
+    private var fireGeneration = UUID.randomUUID()
     private var webSocket: WebSocket? = null
     private var stopped = false
     private var started = false
@@ -413,7 +449,6 @@ class RoomModel(
             _stages.value = saved.map { it.normalized() }
         }
         pending = pendingStore.load(pendingKey)
-        scope.launch { TrainingSync.retry(context, api, user.id) }
     }
 
     /** members 中自己的服务端角色。 */
@@ -452,11 +487,24 @@ class RoomModel(
     fun update(value: Race) {
         val current = race
         if (current != null && !current.accepts(value)) return
+        if (pending?.let { it.raceId != value.id || !value.active } == true) archivePending()
+        if (current?.id != value.id) recordingClock = clock?.takeIf { value.active && it.fresh }
+        if (value.active && recordingClock == null && clock?.fresh == true) recordingClock = clock
+        if (!value.active) recordingClock = null
         val settings = value.starterSettings
         if (current?.id != value.id && settings != null && settings.size == 3 && settings.all { it.valid }) stages = settings
         race = if (current?.id == value.id && value.reactionStatus == null) value.copy(reactionMs = current.reactionMs, reactionStatus = current.reactionStatus) else value
         if (!value.active) interrupt()
     }
+
+    private fun archivePending() {
+        val value = pending ?: return
+        pendingStore.save("$pendingKey:${value.raceId}", value)
+        pendingStore.deleteIfUnchanged(pendingKey, value)
+        pending = null
+    }
+
+    val hasRecordingClock: Boolean get() = recordingClock != null || clock?.fresh == true
 
     /** 停止全部协程与 WebSocket。 */
     fun stop() {
@@ -471,6 +519,7 @@ class RoomModel(
 
     /** 退后台：取消按压、停音频、清提示。 */
     fun interrupt() {
+        fireGeneration = UUID.randomUUID()
         pressed = false
         eventClock = null
         audio.stop(); reactionMotion.end(if (race?.status == "completed") "timeout" else "cancelled")
@@ -482,7 +531,7 @@ class RoomModel(
 
     /** 回前台：比赛进行中则重新校时，并让 WebSocket 立刻心跳一次。 */
     fun resume() {
-        if (race?.active == true) scope.launch { calibrate() }
+        if ((race?.active != true || recordingClock == null) && clock?.fresh != true) scope.launch { calibrate() }
         runCatching { webSocket?.send("{\"type\":\"ping\"}") }
     }
 
@@ -512,6 +561,7 @@ class RoomModel(
                 progress = i + 1
             }
             clock = ClockMapping.average(samples)
+            if (race?.active == true && recordingClock == null) recordingClock = clock
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -548,6 +598,7 @@ class RoomModel(
     }
 
     suspend fun beginRecording() {
+        if (pending != null) { error = "上一轮计时记录尚未同步，请重新同步后再开始。"; return }
         if (!ready || !connected || role == null || roleSaving || clock?.fresh != true || syncing) {
             error = if (roleSaving) "角色正在后台同步，请稍后开始记录。" else "请等待两端就绪并完成校时，再开始记录。"
             return
@@ -559,7 +610,7 @@ class RoomModel(
         val current = race ?: return
         if (raceRole != "start" || !current.active || current.startAt != null || attemptedAutoStart == current.id) return
         val settings = current.starterSettings ?: return
-        if (settings.size != 3 || settings.any { !it.valid }) return
+        if (settings.size != 3 || settings.any { !it.valid }) { error = incompatiblePlan; return }
         if (clock?.fresh != true) calibrate()
         if (clock?.fresh != true) return
         attemptedAutoStart = current.id
@@ -574,6 +625,7 @@ class RoomModel(
         else "/api/rooms/$code/races/${currentRace?.id ?: throw ClientError(0, null, "当前没有比赛")}/$action"
         val body = if (action == "start") buildJsonObject { put("starterSettings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), stages)) } else null
         val data = api.request(path, "POST", body) { decodeRace(it) }
+        if (action == "start" && data?.starterSettings == null) throw ClientError(0, null, "发令设置暂时未能同步，请返回房间重试。")
         data?.let { update(it) }
     }
 
@@ -582,14 +634,17 @@ class RoomModel(
     val volumeWarningFlow: StateFlow<Boolean> get() = _volumeWarning
     fun dismissVolumeWarning() { _volumeWarning.value = false }
 
+    private val incompatiblePlan = "本轮发令设置超出 0～10 秒整数范围，暂无法发令。请重新创建房间并使用此范围设置。"
     suspend fun fire(allowReducedVolume: Boolean = false) {
+        val settings = race?.starterSettings ?: stages
+        if (settings.size != 3 || settings.any { !it.valid }) { error = incompatiblePlan; return }
         val snapshot = clock
         val pass = snapshot != null && snapshot.fresh && !syncing && !firing &&
             race?.active == true && race?.startAt == null && pending == null && raceRole == "start"
         if (!pass) {
             if (clock?.fresh != true) {
                 calibrate()
-                error = "校时已更新，请再次发令"
+                if (clock?.fresh == true) error = "时间校准已完成，请再次发令。"
             }
             return
         }
@@ -598,37 +653,47 @@ class RoomModel(
         }
         _volumeWarning.value = false
         val clockSnapshot = snapshot!!
+        val token = UUID.randomUUID(); fireGeneration = token
+        val raceId = race!!.id
         firing = true
         try {
             cue = "请保持手机与起跑器稳定…"
-            reactionMotion.prepare(stages[0].reactionEnabled)
+            reactionMotion.prepare(settings[0].reactionEnabled)
+            currentCoroutineContext().ensureActive()
+            if (fireGeneration != token || stopped || race?.id != raceId || race?.active != true) return
             val clicked = MonotonicClock.now()
-            val (gunAt, extra) = audio.fire(clicked, stages, onCue = { cue = it }, onDeadline = { cueDeadline = it })
+            val (gunAt, extra) = audio.fire(clicked, settings, onCue = { if (fireGeneration == token) cue = it }, onDeadline = { if (fireGeneration == token) cueDeadline = it })
+            if (fireGeneration != token || stopped || race?.id != raceId || race?.active != true) return
             capture("start", gunAt, clockSnapshot, extra)
-            val raceId = race?.id
-            if (raceId != null) reactionMotion.gun(gunAt) { result ->
-                race = race?.copy(reactionMs = result.reactionMs, reactionStatus = result.reactionStatus)
+            reactionMotion.gun(gunAt) { result ->
+                if (race?.id == raceId) race = race?.copy(reactionMs = result.reactionMs, reactionStatus = result.reactionStatus)
+                val path = "/api/rooms/$code/races/$raceId/reaction"
+                val body = TrainingSync.reactionBody(result.reactionMs, result.reactionStatus)
+                TrainingSync.enqueue(context, api, user.id, path, body, raceId)
                 scope.launch {
-                    try { TrainingSync.send(context, api, user.id, "/api/rooms/$code/races/$raceId/reaction", TrainingSync.reactionBody(result.reactionMs, result.reactionStatus), raceId) }
-                    catch (e: Exception) { error = "反应时已保留，联网后重试：${e.message}" }
+                    try { TrainingSync.send(context, api, user.id, path, body, raceId) }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { error = "反应时尚未同步，已保留在此设备上。请联网后重试。" }
                 }
             }
         } catch (e: CancellationException) {
+            if (fireGeneration == token) { audio.stop(); reactionMotion.end() }
             throw e
         } catch (e: Throwable) {
-            error = e.message ?: "发生未知错误"
-            audio.stop(); reactionMotion.end(if (race?.status == "completed") "timeout" else "cancelled")
-        } finally {
-            firing = false
-        }
+            if (fireGeneration == token) {
+                error = e.message ?: "发令未完成，请重试。"
+                audio.stop(); reactionMotion.end()
+            }
+        } finally { if (fireGeneration == token) firing = false }
     }
 
     /** 终点按下：只锁定校时快照，不产生事件。 */
     fun press() {
-        val snapshot = clock
-        if (snapshot == null || !snapshot.fresh || syncing || pending != null ||
+        val snapshot = recordingClock ?: clock?.takeIf { it.fresh }
+        if (snapshot == null || syncing || pending != null ||
             race?.active != true || race?.finishAt != null || raceRole != "finish"
         ) {
+            if (snapshot == null) error = "尚未完成时间校准，请返回房间重新校时。"
             return
         }
         eventClock = snapshot
@@ -637,14 +702,14 @@ class RoomModel(
 
     /**
      * 终点松手：capture finish 事件。
-     * at 为 UI 传入的 MonotonicClock.now() + clock.offsetMs（已是服务器时间域），不再叠加偏移。
+     * at 为触控事件自身的本机单调时间，由 capture 换算为服务器时间。
      */
     fun release(at: Double) {
         val snapshot = eventClock ?: return
         pressed = false
         eventClock = null
         if (race?.active != true) return
-        capture("finish", at, snapshot, 0.0, localTime = false)
+        capture("finish", at, snapshot)
     }
 
     /** 取消按压。 */
@@ -664,13 +729,14 @@ class RoomModel(
                 "/api/rooms/$code/races/${current.raceId}/events", "POST",
                 eventBody(event.kind, event.at, event.uncertaintyMs),
             ) { decodeRace(it) }
-            pending = null
-            pendingStore.delete(pendingKey)
-            data?.let { update(it) }
+            if (pending == current) pending = null
+            pendingStore.deleteIfUnchanged(pendingKey, current)
+            if (race?.id == current.raceId) data?.let { update(it) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            error = (e.message ?: "发生未知错误") + "；原始时间戳已保留"
+            if (pending != current) return
+            error = "计时记录暂未同步，已保留在此设备上。请联网后重试。"
             val status = (e as? ClientError)?.status ?: 0
             // 网络错误或服务端 5xx 才自动重试
             autoRetry = status == 0 || status >= 500
@@ -692,8 +758,7 @@ class RoomModel(
                 "/api/rooms/$code/races/${currentRace.id}/result", "POST",
                 buildJsonObject { put("distance", distance) },
             ) { decodeHistoryRecord(it) }
-            val base = race ?: currentRace
-            update(base.copy(savedResult = SavedResult(record.distance, record.isPb, record.pbImprovementMs)))
+            if (race?.id == currentRace.id) update(race!!.copy(savedResult = SavedResult(record.distance, record.isPb, record.pbImprovementMs)))
         }
     }
 
@@ -712,12 +777,13 @@ class RoomModel(
         while (!stopped && currentCoroutineContext().isActive) {
             try {
                 val data = api.request("/api/rooms/$code/races") { decodeRace(it) }
-                data?.let { update(it) }
+                if (data != null) update(data) else archivePending()
                 if (pending != null && autoRetry && MonotonicClock.now() >= retryAfter) submit()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                error = e.message ?: "发生未知错误"
+                val status = (e as? ClientError)?.status ?: 0
+                if (!(race?.active == true && hasRecordingClock && (status == 0 || status >= 500))) error = e.message ?: "连接暂时中断，请重试。"
             }
             delay(1000)
         }

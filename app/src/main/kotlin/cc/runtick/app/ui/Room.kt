@@ -27,11 +27,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,6 +69,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -110,6 +118,8 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
     var soundCheck by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
+    var confirmExit by remember { mutableStateOf(false) }
+    fun requestExit() { if (model.race?.active == true || model.pending != null) confirmExit = true else leave() }
     var distance by rememberSaveable { mutableStateOf("100") }
 
     // 订阅 RoomModel 状态流（派生属性在重组时按最新值求值）。
@@ -135,13 +145,13 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
 
     // 终点触控全屏条件：raceRole 为终点、race 进行中、未保存终点时间、已校时且无待提交事件。
     val finishVisible = raceRole == "finish" && race != null && race.isActive &&
-        race.finishAt == null && clock != null && pending == null
+        race.finishAt == null && model.hasRecordingClock && pending == null
 
     var dismissedRecording by rememberSaveable { mutableStateOf<String?>(null) }
     val startVisible = raceRole == "start" && race?.isActive == true && dismissedRecording != race.id
     val showFinish = finishVisible && dismissedRecording != race?.id
     fun dismissRecording() { model.interrupt(); dismissedRecording = race?.id }
-    LaunchedEffect(startVisible, race?.id) {
+    LaunchedEffect(startVisible, race?.id, race?.starterSettings) {
         if (race?.isActive == true) soundCheck = false
         if (startVisible) model.autoFire()
     }
@@ -149,7 +159,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         RTPage {
             RTBrand(
-                onExit = leave,
+                onExit = { requestExit() },
                 exiting = busy,
                 showHelp = true,
                 onHelp = { showHelp = true },
@@ -185,7 +195,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                 }
                 if (syncing) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("HTTP 校时 $progress/20", fontSize = 12.sp, color = RT.muted)
+                        Text("正在校准时间 $progress/20", fontSize = 12.sp, color = RT.muted)
                         LinearProgressIndicator(
                             progress = { progress / 20f },
                             modifier = Modifier.fillMaxWidth(),
@@ -215,7 +225,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                                 Text(member.loginId, fontSize = 15.sp, color = RT.ink)
                                 Spacer(Modifier.weight(1f))
                                 Text(
-                                    "${roleTitle(if (member.loginId == user.loginId) role else member.deviceRole)} · ${if (member.online) "在线" else "离线"}",
+                                    "${roleTitle(if (member.loginId == user.loginId) role else if (model.roleSaving && role != null) (if (role == "start") "finish" else "start") else member.deviceRole)} · ${if (member.online) "在线" else "离线"}",
                                     fontSize = 13.sp, color = RT.muted
                                 )
                             }
@@ -244,21 +254,21 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                 ) { RTButtonText("开始记录") }
             }
 
-            if (raceRole == "start" && race?.isActive == true && dismissedRecording == race.id) {
-                RTButton(onClick = { dismissedRecording = null }) { RTButtonInkText("返回记录页") }
+            if ((raceRole == "start" || finishVisible) && race?.isActive == true && dismissedRecording == race.id) {
+                RTButton(onClick = { dismissedRecording = null }) { RTButtonInkText("进入记录页") }
             }
 
             // 待提交时间戳。
             pending?.let { current ->
-                RTCard(title = "待提交时间戳") {
+                RTCard(title = "计时记录待同步") {
                     Text(
-                        "轮次 ${current.raceId} · ${roleTitle(current.event.kind)}\n原始时间戳已保留，联网后自动重试",
+                        "计时记录已保留在此设备上，联网后会自动重试同步。",
                         fontSize = 14.sp, lineHeight = 20.sp, color = RT.ink
                     )
                     RTButton(
                         onClick = { scope.launch { model.submit() } },
                         enabled = !submitting
-                    ) { RTButtonInkText("重试提交") }
+                    ) { RTButtonInkText("重新同步") }
                 }
             }
 
@@ -268,7 +278,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                     RTButtonInkText("历史成绩")
                 }
             }
-            RTButton(onClick = leave) { RTButtonInkText("退出房间") }
+            RTButton(onClick = { requestExit() }) { RTButtonInkText("退出房间") }
         }
 
         // 声音确认弹层。
@@ -278,20 +288,19 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                 containerColor = RT.background
             ) {
                 RTPage {
-                    RTCard(title = "开始前确认声音") {
+                    RTCard(title = "发令设置") {
                         Text(
-                            "调高音量，使用手机扬声器；确认终点已进入触控区后再发令。",
+                            "确认后双端进入记录页。建议调高媒体音量，使用手机扬声器。",
                             fontSize = 14.sp, lineHeight = 20.sp, color = RT.ink
                         )
                         StageSettings(stages = stages, onChange = { model.stages = it })
-                        AudioPreparationCard()
                         RTButton(
                             onClick = {
                                 soundCheck = false
                                 scope.launch { model.beginRecording() }
                             },
                             secondary = false
-                        ) { RTButtonText("已确认声音，开始记录") }
+                        ) { RTButtonText("确认并开始记录") }
                     }
                     RTButton(onClick = { soundCheck = false }) { RTButtonInkText("返回准备") }
                 }
@@ -312,6 +321,13 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
         }
 
         if (showHelp) RTGlobalHelpSheet(onDismiss = { showHelp = false })
+        if (confirmExit) androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmExit = false },
+            title = { Text("退出当前房间？") },
+            text = { Text("当前训练将中断。未保存的成绩可能无法再保存；待同步记录会继续保留在此设备上。") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { confirmExit = false; leave() }) { Text("退出房间") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmExit = false }) { Text("继续训练") } }
+        )
     }
 
     // 触控全屏或声音确认时抑制全局弹窗，错误由各自界面处理。
@@ -400,7 +416,7 @@ private fun RaceCard(
                     StartSection(model, race)
                 } else {
                     Text(
-                        if (race.finishAt == null) "校时完成后进入终点触控区" else "终点时间已保存，等待枪声时间戳",
+                        if (race.finishAt == null) "校时完成后进入终点触控区" else "已记录冲线，等待起点同步",
                         fontSize = 16.sp, color = RT.ink
                     )
                 }
@@ -447,7 +463,7 @@ private fun CompletedSection(
         }
 
         Text(
-            "服务端已保存 · 估算误差 ±%.0f ms（不含人工反应）".format(race.uncertaintyMs ?: 0.0),
+            "本轮计时完成 · 估算误差 ±%.0f ms（不含人工反应）".format(race.uncertaintyMs ?: 0.0),
             fontSize = 12.sp, lineHeight = 17.sp, color = RT.muted
         )
         val saved = race.savedResult
@@ -544,106 +560,63 @@ private fun FinishPad(model: RoomModel, loginId: String, leave: () -> Unit) {
     val clock by model.clockFlow.collectAsState()
     val race by model.raceFlow.collectAsState()
 
-    // 禁止返回键关闭；返回键仅取消触控。
-    BackHandler(enabled = true) { model.cancelPress(); leave() }
-
-    // 切后台取消触控（不产生成绩）；离开页面同样取消。
+    BackHandler { model.cancelPress(); leave() }
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) model.cancelPress()
-        }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) model.cancelPress() }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            model.cancelPress()
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); model.cancelPress() }
     }
-
     val background = if (pressed) Color(0xFFB8ED78) else Color(0xFF66DBD3)
     val content = Color(0xFF123D3B)
-
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(background)
-            // 全屏触控捕获：按下 press、松手 release（单调钟时间戳）、指针离开 cancel。
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        when (event.type) {
-                            PointerEventType.Press -> model.press()
-                            PointerEventType.Release -> model.release(MonotonicClock.now())
-                            PointerEventType.Exit -> if (model.pressed) model.cancelPress()
+    Column(Modifier.fillMaxSize().background(background).windowInsetsPadding(WindowInsets.safeDrawing)) {
+        RecordingHeader("$loginId · 房间 ${model.code}", onBack = { model.cancelPress(); leave() })
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val availableHeight = maxHeight.value
+            val ringSize = (availableHeight * 0.25f).coerceIn(80f, 180f).dp
+            val density = LocalDensity.current
+            Column(
+                Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)
+                    .pointerInput(model) {
+                        awaitEachGesture {
+                            val first = awaitFirstDown(requireUnconsumed = true)
+                            val pointer = first.id
+                            model.press()
+                            try {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == pointer }
+                                    if (change == null || change.isConsumed || event.changes.count { it.pressed } > 1 ||
+                                        change.position.x !in 0f..size.width.toFloat() || change.position.y !in 0f..size.height.toFloat()) break
+                                    if (!change.pressed) {
+                                        val at = MonotonicClock.now() + change.uptimeMillis - android.os.SystemClock.uptimeMillis()
+                                        model.release(at)
+                                        break
+                                    }
+                                }
+                            } finally { model.cancelPress() }
                         }
-                    }
-                }
-            }
-    ) {
-        Column(
-            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("$loginId · 房间 ${model.code}", fontSize = 14.sp, color = content)
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Spacer(Modifier.weight(1f))
-                Text(
-                    "返回房间",
-                    modifier = Modifier
-                        .border(1.dp, content.copy(alpha = 0.35f), RoundedCornerShape(50))
-                        .clickable { model.cancelPress(); leave() }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = content
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            // 中央圆环 + 手指图标脉冲。
-            Box(contentAlignment = Alignment.Center) {
-                Box(Modifier.size(180.dp).border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape))
-                val ringSize by animateDpAsState(
-                    targetValue = if (pressed) 130.dp else 110.dp,
-                    animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
-                    label = "ring"
-                )
-                Box(Modifier.size(ringSize).border(2.dp, Color.White.copy(alpha = 0.45f), CircleShape))
-                val pulse = rememberInfiniteTransition(label = "pulse")
-                val pulseAlpha by pulse.animateFloat(
-                    initialValue = 0.55f, targetValue = 1f,
-                    animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-                    label = "pulseAlpha"
-                )
-                Icon(
-                    Icons.Filled.TouchApp,
-                    contentDescription = null,
-                    tint = content.copy(alpha = if (pressed && !reduceMotion) pulseAlpha else 1f),
-                    modifier = Modifier.size(64.dp)
-                )
-            }
-            Spacer(Modifier.height(30.dp))
-            Text(
-                if (pressed) "冲线时松手" else "按住屏幕，等待冲线",
-                fontSize = 30.sp, fontWeight = FontWeight.Bold, color = content,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                if (race?.startAt == null) "可以提前按住 · 等待枪声" else "计时中 · 松开记录",
-                fontSize = 15.sp, color = content.copy(alpha = 0.85f)
-            )
-            Spacer(Modifier.height(6.dp))
-            Text("取消触控不会记录成绩", fontSize = 12.sp, color = content.copy(alpha = 0.6f))
-            Spacer(Modifier.weight(1f))
-            if (clock != null && !clock!!.fresh) {
-                Text(
-                    "重新校时",
-                    modifier = Modifier
-                        .border(1.dp, content.copy(alpha = 0.35f), RoundedCornerShape(50))
-                        .clickable { scope.launch { model.calibrate() } }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    fontSize = 14.sp, color = content
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(ringSize).border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape))
+                    val inner by animateDpAsState(if (pressed) ringSize * 0.75f else ringSize * 0.62f, label = "ring")
+                    Box(Modifier.size(inner).border(2.dp, Color.White.copy(alpha = 0.45f), CircleShape))
+                    Icon(Icons.Filled.TouchApp, contentDescription = null, tint = content, modifier = Modifier.size(ringSize * 0.36f))
+                }
+                Spacer(Modifier.height((availableHeight * 0.035f).coerceAtMost(24f).dp))
+                Text(if (pressed) "冲线时松手" else "按住屏幕，等待冲线",
+                    fontSize = (availableHeight * 0.055f / density.fontScale).coerceIn(16f, 30f).sp,
+                    fontWeight = FontWeight.Bold, color = content, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(12.dp))
+                Text(if (race?.startAt == null) "可以提前按住 · 等待枪声" else "计时中 · 松开记录", fontSize = 15.sp, color = content, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(6.dp))
+                Text("取消触控不会记录成绩", fontSize = 12.sp, color = content, textAlign = TextAlign.Center)
+                Spacer(Modifier.weight(1f))
             }
         }
+        if (!model.hasRecordingClock) RTButton(onClick = { scope.launch { model.calibrate() } }, modifier = Modifier.padding(16.dp)) { RTButtonInkText("重新校时") }
     }
 
     // FinishPad 自己的错误弹窗。
@@ -670,16 +643,21 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
         lifecycle.lifecycle.addObserver(observer)
         onDispose { lifecycle.lifecycle.removeObserver(observer); model.interrupt() }
     }
-    Column(Modifier.fillMaxSize().rtBackdrop().windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        RTButton(onClick = onBack) { RTButtonInkText("返回房间") }
-        Spacer(Modifier.weight(1f))
-        Text(cue ?: "正在准备发令…", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = RT.ink, textAlign = TextAlign.Center)
-        deadline?.let { Text(ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 96.sp, fontWeight = FontWeight.Bold, color = RT.ink) }
-        Spacer(Modifier.weight(1f))
-        if (!firing && race?.startAt == null && pending == null && !volumeWarning) {
-            RTButton(onClick = { scope.launch { model.fire() } }, enabled = !syncing) { RTButtonInkText("重新发令") }
+    Column(Modifier.fillMaxSize().rtBackdrop().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        RecordingHeader("房间 ${model.code}", onBack)
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                Spacer(Modifier.weight(1f))
+                Text(cue ?: "准备发令", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = RT.ink, textAlign = TextAlign.Center)
+                deadline?.let { Text(ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 96.sp, fontWeight = FontWeight.Bold, color = RT.ink) }
+                Text(if (race?.startAt == null) "跟随口令，准备出发" else "枪声已发出 · 等待冲线", color = RT.muted, textAlign = TextAlign.Center)
+                if (!firing && race?.startAt == null && pending == null && !volumeWarning) {
+                    RTButton(onClick = { scope.launch { model.fire() } }, enabled = !syncing) { RTButtonInkText("重新发令") }
+                }
+                Spacer(Modifier.weight(1f))
+                Text("保持 App 在前台，使用本机扬声器播放", fontSize = 12.sp, color = RT.muted, textAlign = TextAlign.Center)
+            }
         }
-        Text(if (race?.startAt == null) "保持 App 在前台 · 枪声响起后出发" else "枪声已发出 · 等待冲线", color = RT.muted)
     }
     if (volumeWarning) androidx.compose.material3.AlertDialog(
         onDismissRequest = { model.dismissVolumeWarning() },
@@ -689,4 +667,16 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
         dismissButton = { androidx.compose.material3.TextButton(onClick = { model.dismissVolumeWarning() }) { Text("先调整音量") } }
     )
     RTErrorAlert(model.errorFlow.collectAsState().value, enabled = !volumeWarning)
+}
+
+/** 顶部栏独立于滚动内容及触控区；导航文字适度限幅，正文保留系统字号。 */
+@Composable
+private fun RecordingHeader(title: String, onBack: () -> Unit) {
+    val density = LocalDensity.current
+    androidx.compose.runtime.CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale.coerceAtMost(1.5f))) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(title, Modifier.weight(1f).testTag("recording.roomLabel"), color = RT.ink, fontSize = 14.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            androidx.compose.material3.TextButton(onClick = onBack, modifier = Modifier.testTag("recording.return")) { Text("返回房间", color = RT.ink, fontSize = 14.sp) }
+        }
+    }
 }

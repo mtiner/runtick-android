@@ -96,16 +96,16 @@ fun AudioPreparationCard(modifier: Modifier = Modifier) {
         if (volumePercent in 0..99) {
             RTNotice(
                 if (volumePercent == 0) "当前媒体音量为零，请调至最大，以免听不到枪声。"
-                else "请将媒体音量调至最大，确保清楚听到发令。"
+                else "建议将媒体音量调至最大，以便清楚听到发令；也可以按当前音量继续。"
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("声音输出", fontSize = 14.sp, color = RT.ink)
+            Text("可用输出设备", fontSize = 14.sp, color = RT.ink)
             Spacer(Modifier.weight(1f))
             Text(route, fontSize = 14.sp, color = RT.muted, textAlign = TextAlign.End)
         }
         if (!builtinSpeakerOnly) {
-            RTNotice("请断开耳机、蓝牙或外接音响，使用本机扬声器发令，避免输出延迟。", error = true)
+            RTNotice("检测到外接声音设备。建议断开耳机、蓝牙或外接音响，使用本机扬声器发令，减少输出延迟。", error = true)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Icon(Icons.Filled.VolumeOff, contentDescription = null, tint = RT.muted, modifier = Modifier.padding(0.dp))

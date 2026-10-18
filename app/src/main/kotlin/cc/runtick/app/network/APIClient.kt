@@ -39,6 +39,13 @@ import kotlin.coroutines.resumeWithException
 class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Context? = null) {
 
     private val jar = PersistentCookieJar(context)
+    private val sessionPrefs = context?.getSharedPreferences("runtick.session", Context.MODE_PRIVATE)
+    val savedUser: cc.runtick.app.core.User? get() = sessionPrefs?.getString("user", null)?.let {
+        runCatching { AppJson.decodeFromString(cc.runtick.app.core.User.serializer(), it) }.getOrNull()
+    }
+    fun remember(user: cc.runtick.app.core.User) {
+        sessionPrefs?.edit()?.putString("user", AppJson.encodeToString(cc.runtick.app.core.User.serializer(), user))?.apply()
+    }
 
     val client: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(jar)
@@ -106,7 +113,7 @@ class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Cont
             val code = errorPayload?.get("code")?.jsonPrimitive?.contentOrNull
             val message = errorPayload?.get("message")?.jsonPrimitive?.contentOrNull
             if (status !in 200..299 || ok != true || data == null) {
-                throw ClientError(status, code ?: "UNKNOWN", message ?: "请求失败，请稍后重试")
+                throw ClientError(status, code ?: "UNKNOWN", when { status == 401 -> "登录状态已过期，请重新登录。"; status >= 500 -> "服务暂时不可用，请稍后重试。"; else -> message ?: "暂时无法读取服务器响应，请稍后重试。" })
             }
             return decode(data)
         }
@@ -130,6 +137,7 @@ class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Cont
     /** 清空会话 Cookie（登出或 401 时调用）。 */
     fun clearCookies() {
         jar.clear()
+        sessionPrefs?.edit()?.clear()?.apply()
     }
 
     /** 网络层异常 → 中文提示。 */

@@ -25,7 +25,7 @@ object AudioReadiness {
     /** 是否仅有本机扬声器在输出（耳机/蓝牙/外接音响都会导致 false）。 */
     fun isBuiltInSpeakerOnly(context: Context): Boolean {
         val devices = audioManager(context).getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        return devices.isNotEmpty() && devices.all { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+        return devices.isNotEmpty() && devices.any { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER } && devices.none { it.type != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER && it.type != AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
     }
 
     private fun audioManager(context: Context): AudioManager =

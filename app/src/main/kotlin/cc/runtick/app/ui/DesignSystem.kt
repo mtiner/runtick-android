@@ -264,7 +264,7 @@ typealias RowScopeAlias = androidx.compose.foundation.layout.RowScope
 /** 主按钮文字样式。 */
 @Composable
 internal fun RTButtonText(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier = modifier, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White, textAlign = TextAlign.Center)
+    Text(text, modifier = modifier, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RT.ink, textAlign = TextAlign.Center)
 }
 
 /** 次级按钮文字样式。 */
