@@ -29,6 +29,7 @@ import cc.runtick.app.core.decodeRoom
 import cc.runtick.app.core.decodeRoomDetail
 import cc.runtick.app.core.decodeUser
 import cc.runtick.app.network.APIClient
+import kotlinx.serialization.json.jsonObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -253,7 +254,7 @@ class AppModel(private val appContext: Context, store: PendingStore? = null, pri
             try {
                 val event = pending.event
                 client.request("/api/rooms/${pending.code}/races/${pending.raceId}/events", "POST",
-                    eventBody(event.kind, event.at, event.uncertaintyMs)) { decodeRace(it) }
+                    AppJson.encodeToJsonElement(TimingEvent.serializer(), event).jsonObject) { decodeRace(it) }
                 pendingStore.deleteIfUnchanged(key, pending)
                 if (room?.pending == pending) room?.pending = null
             } catch (e: CancellationException) { throw e }
@@ -318,6 +319,7 @@ class RoomModel(
     private val user: User,
     val code: String,
     store: PendingStore? = null,
+    private val synchronizeTime: suspend ((Int) -> Unit) -> ClockMapping = { cc.runtick.app.core.NativeTimeSync.synchronize(it) },
 ) {
 
     private val prefs = context.getSharedPreferences("runtick.room", Context.MODE_PRIVATE)
@@ -484,6 +486,13 @@ class RoomModel(
         if (started || stopped) return
         started = true
         scope.launch { calibrate() }
+        val manager=context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val callback=object: android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) { scope.launch { needsResync = true; ntpClient.invalidate(); calibrate() } }
+            override fun onLost(network: android.net.Network) { scope.launch { needsResync = true; ntpClient.invalidate(); calibrate() } }
+        }
+        networkCallback=callback
+        manager.registerDefaultNetworkCallback(callback)
         scope.launch { pollLoop() }
         scope.launch { socketLoop() }
     }
@@ -513,6 +522,8 @@ class RoomModel(
 
     /** 停止全部协程与 WebSocket。 */
     fun stop() {
+        networkCallback?.let { callback -> runCatching { (context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).unregisterNetworkCallback(callback) } }
+        networkCallback=null
         stopped = true
         scope.cancel()
         runCatching { webSocket?.cancel() }
@@ -536,45 +547,65 @@ class RoomModel(
 
     /** 回前台：比赛进行中则重新校时，并让 WebSocket 立刻心跳一次。 */
     fun resume() {
-        if ((race?.active != true || recordingClock == null) && clock?.fresh != true) scope.launch { calibrate() }
+        needsResync = true
+        if ((race?.active != true || recordingClock == null) ) scope.launch { needsResync = true; ntpClient.invalidate(); calibrate() }
         runCatching { webSocket?.send("{\"type\":\"ping\"}") }
     }
 
-    /** 20 次时钟采样并汇总为 ClockMapping。 */
+    /** Native NTP sampling; preserve the last result on failure. */
+    private val installationId: String by lazy {
+        val prefs=context.getSharedPreferences("runtick.device",Context.MODE_PRIVATE)
+        prefs.getString("installationId",null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("installationId",it).apply() }
+    }
+    var allowHTTPFallback = false
+    var syncError = ""
+    private var needsResync = false
+    private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+    val syncSummary: String get() {
+        if (syncing) return "时间同步中 · $progress/8"
+        val value=recordingClock ?: clock ?: return "时间同步失败 · 尚无可用时间基准"
+        val state=if(!value.fresh) "同步失败 · 映射已过期或不可靠" else if(value.server!="HTTP" && syncError.isEmpty()) "已同步" else "同步质量下降"
+        return "$state · ${value.server} · 年龄 ${(value.ageMs/1000).toInt()}s · 估计不确定度 %.1fms".format(value.estimatedUncertaintyMs)
+    }
+    private val ntpClient = cc.runtick.app.core.NativeTimeSync
     suspend fun calibrate() {
         if (syncing || pressed || firing) return
         syncing = true
         progress = 0
         error = ""
         try {
-            val samples = mutableListOf<ClockSample>()
-            for (i in 0 until 20) {
-                currentCoroutineContext().ensureActive()
-                val sent = MonotonicClock.now()
-                val response: ClockResponse = api.request(
-                    "/api/clock?clientSentAt=$sent&nonce=${UUID.randomUUID()}",
-                ) { decodeClock(it) }
-                val received = MonotonicClock.now()
-                if (response.clientSentAt != sent ||
-                    response.sentAt < response.receivedAt ||
-                    response.processingMs != response.sentAt - response.receivedAt ||
-                    received - sent < response.processingMs
-                ) {
-                    throw ClientError(0, null, "校时响应无效，请重试")
-                }
-                samples.add(ClockSample(sent, received, response.receivedAt, response.sentAt))
-                progress = i + 1
+            try { clock = synchronizeTime { progress = it }; syncError = ""; needsResync = false }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (!allowHTTPFallback) throw e
+                clock = httpFallback(); syncError = "NTP 不可用，使用 HTTP 降级"; needsResync = false
             }
-            clock = ClockMapping.average(samples)
+            clock?.let { android.util.Log.d("RunTickNTP", "server=${it.server} samples=${it.validSamples} RTT=${it.avgRttMs} offset=${it.offsetMs} age=${it.ageMs} estimatedUncertainty=${it.estimatedUncertaintyMs}") }
             if (race?.active == true && recordingClock == null) recordingClock = clock
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            clock = null
-            error = e.message ?: "发生未知错误"
+            if (clock == null) clock = ntpClient.latest
+            syncError = e.message ?: "校时失败"
+            error = syncError
         } finally {
             syncing = false
         }
+    }
+
+    private suspend fun httpFallback(): ClockMapping {
+        val samples = mutableListOf<ClockSample>()
+        repeat(8) {
+            val sent=MonotonicClock.now()
+            val response=api.request("/api/clock?clientSentAt=$sent&nonce=${UUID.randomUUID()}") { decodeClock(it) }
+            val received=MonotonicClock.now()
+            require(response.clientSentAt==sent && response.sentAt>=response.receivedAt && response.processingMs==response.sentAt-response.receivedAt && received-sent>=response.processingMs)
+            samples.add(ClockSample(sent,received,response.receivedAt,response.sentAt))
+            delay(100)
+        }
+        val offsets=samples.map { ((it.serverReceivedAt-it.sentAt)+(it.serverSentAt-it.receivedAt))/2 }
+        require(offsets.max()-offsets.min()<=10) { "HTTP 降级质量不足" }
+        return cc.runtick.app.core.NtpQuality.select(samples).copy(server="HTTP",validSamples=samples.size)
     }
 
     private val _roleRevision = MutableStateFlow(0)
@@ -604,6 +635,7 @@ class RoomModel(
 
     suspend fun beginRecording() {
         if (pending != null) { error = "上一轮计时记录尚未同步，请重新同步后再开始。"; return }
+        if (needsResync || clock?.fresh != true) { if (needsResync) ntpClient.invalidate(); calibrate() }
         if (!ready || !connected || role == null || roleSaving || clock?.fresh != true || syncing) {
             error = if (roleSaving) "角色正在后台同步，请稍后开始记录。" else "请等待两端就绪并完成校时，再开始记录。"
             return
@@ -643,7 +675,7 @@ class RoomModel(
     suspend fun fire(allowReducedVolume: Boolean = false) {
         val settings = race?.starterSettings ?: stages
         if (settings.size != 3 || settings.any { !it.valid }) { error = incompatiblePlan; return }
-        val snapshot = clock
+        val snapshot = recordingClock ?: clock
         val pass = snapshot != null && snapshot.fresh && !syncing && !firing &&
             race?.active == true && race?.startAt == null && pending == null && raceRole == "start"
         if (!pass) {
@@ -732,7 +764,7 @@ class RoomModel(
             val event = current.event
             val data = api.request(
                 "/api/rooms/$code/races/${current.raceId}/events", "POST",
-                eventBody(event.kind, event.at, event.uncertaintyMs),
+                AppJson.encodeToJsonElement(TimingEvent.serializer(), event).jsonObject,
             ) { decodeRace(it) }
             if (pending == current) pending = null
             pendingStore.deleteIfUnchanged(pendingKey, current)
@@ -879,12 +911,18 @@ class RoomModel(
         if (pending != null) return
         val currentRace = race ?: return
         autoRetry = true
-        val serverAt = if (localTime) at + clockSnapshot.offsetMs else at
+        val serverAt = if (localTime) clockSnapshot.utcAt(at) else at
         val value = PendingEvent(
             code, currentRace.id, user.id,
-            TimingEvent(kind, serverAt, clockSnapshot.uncertaintyMs + extra),
+            TimingEvent(kind, serverAt, clockSnapshot.estimatedUncertaintyMs + extra,
+                MonotonicClock.nanosAt(at).toString(), installationId, currentRace.id, clockSnapshot.server,
+                clockSnapshot.avgRttMs, clockSnapshot.ageMs, clockSnapshot.offsetMs,
+                if (clockSnapshot.server == "HTTP") "HTTP" else "NTP"),
         )
         pending = value
+        val diagnostics=context.getSharedPreferences("runtick.eventDiagnostics",Context.MODE_PRIVATE)
+        val entries=(diagnostics.getString("events",null)?.let { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) as kotlinx.serialization.json.JsonArray }.getOrNull() }?.toList() ?: emptyList()) + AppJson.encodeToJsonElement(PendingEvent.serializer(),value)
+        diagnostics.edit().putString("events",kotlinx.serialization.json.JsonArray(entries.takeLast(200)).toString()).apply()
         pendingStore.save(pendingKey, value)
         scope.launch { submit() }
     }

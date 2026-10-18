@@ -3,6 +3,8 @@ package cc.runtick.app
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch { runCatching { cc.runtick.app.core.NativeTimeSync.synchronize() } }
         // 浅色系统栏（透明背景、深色前景图标），与锁定的浅色主题一致。
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(

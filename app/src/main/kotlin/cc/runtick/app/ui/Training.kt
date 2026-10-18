@@ -79,7 +79,7 @@ import java.util.UUID
                     onCue = { if (generation == token) cue = it },
                     onDeadline = { if (generation == token) deadline = it })
                 if (generation != token) return@launch
-                val firedAt = System.currentTimeMillis()
+                val firedAt = at
                 motion.gun(at) { value ->
                     if (generation == token) result = value
                     val body = buildJsonObject { put("id", id); put("firedAt", firedAt); put("athleteId", user.id); put("settings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), saved)); put("reactionMs", value.reactionMs?.let { JsonPrimitive(it) } ?: JsonNull); put("reactionStatus", value.reactionStatus) }

@@ -101,17 +101,17 @@ data class StageDelay(var random: Boolean, var min: Double, var max: Double, var
 }
 
 /**
- * 单调时钟：进程启动时冻结一次 epoch 偏移，之后基于 System.nanoTime 输出
- * 与服务器无关的毫秒时间戳。纯 JVM 实现（等价于 iOS 的 mach 绝对时间方案），
- * 便于单元测试。
+ * Frozen initial UTC bridge over elapsedRealtimeNanos, including device suspend.
+ * Only calibrated ClockMapping values may be used for cross-device timing.
  */
 object MonotonicClock {
-    private val epoch: Double = System.currentTimeMillis() - System.nanoTime() / 1_000_000.0
-
-    fun now(): Double = epoch + System.nanoTime() / 1_000_000.0
-
-    /** 把 System.nanoTime 时间戳（如 AudioTimestamp）换算到同一时钟域。 */
-    fun fromNanos(nanos: Long): Double = epoch + nanos / 1_000_000.0
+    private val anchorNanos = android.os.SystemClock.elapsedRealtimeNanos()
+    private val anchorUTC = System.currentTimeMillis().toDouble()
+    fun rawNanos(): Long = android.os.SystemClock.elapsedRealtimeNanos()
+    fun nanosAt(localMs: Double): Long = anchorNanos + ((localMs-anchorUTC)*1_000_000).toLong()
+    fun now(): Double = anchorUTC + (rawNanos() - anchorNanos) / 1_000_000.0
+    // AudioTimestamp uses CLOCK_MONOTONIC (excludes suspend); bridge at capture.
+    fun fromNanos(nanos: Long): Double = now() + (nanos - System.nanoTime()) / 1_000_000.0
 }
 
 /** 单次校时样本（客户端本地时间 + 服务器回执时间）。 */
@@ -120,6 +120,7 @@ data class ClockSample(
     val receivedAt: Double,
     val serverReceivedAt: Double,
     val serverSentAt: Double,
+    val rootDistanceMs: Double = 0.0,
 )
 
 /** 校时结果：offset 把本地单调时间换算到服务器时间域。 */
@@ -128,9 +129,20 @@ data class ClockMapping(
     val uncertaintyMs: Double,
     val avgRttMs: Double,
     val sampledAtMs: Double,
+    val server: String = "HTTP",
+    val validSamples: Int = 0,
+    val driftPpm: Double = 50.0,
+    val maximumAgeMs: Double = 120_000.0,
+    val maximumUncertaintyMs: Double = 25.0,
+    val frequencyScale: Double = 1.0,
+    val referenceMono: Long? = null,
+    val referenceUTC: Double? = null,
 ) {
     /** 校时结果 120 秒内视为新鲜。 */
-    val fresh: Boolean get() = MonotonicClock.now() - sampledAtMs <= 120_000.0
+    fun utcAt(localMs: Double): Double = if (referenceMono != null && referenceUTC != null) referenceUTC + (MonotonicClock.nanosAt(localMs)-referenceMono)/1_000_000.0*frequencyScale else localMs+offsetMs
+    val ageMs: Double get() = (MonotonicClock.now() - sampledAtMs).coerceAtLeast(0.0)
+    val estimatedUncertaintyMs: Double get() = uncertaintyMs + ageMs * driftPpm / 1_000_000.0
+    val fresh: Boolean get() = ageMs <= maximumAgeMs && estimatedUncertaintyMs <= maximumUncertaintyMs
 
     companion object {
         /**
@@ -156,7 +168,10 @@ data class ClockMapping(
 
 /** 提交给服务器的计时事件（kind: "start" | "finish"，at 为服务器时间域毫秒）。 */
 @Serializable
-data class TimingEvent(val kind: String, val at: Double, val uncertaintyMs: Double)
+data class TimingEvent(val kind: String, val at: Double, val uncertaintyMs: Double,
+    val monoNanos: String? = null, val deviceId: String? = null, val sessionId: String? = null,
+    val syncServer: String? = null, val syncRttMs: Double? = null, val syncAgeMs: Double? = null,
+    val syncOffsetMs: Double? = null, val syncSource: String? = null)
 
 /** 待补交事件（冲线/枪声先落盘，网络恢复后重试）。 */
 @Serializable
