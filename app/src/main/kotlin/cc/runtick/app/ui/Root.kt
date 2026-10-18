@@ -3,6 +3,7 @@ package cc.runtick.app.ui
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorManager
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +39,8 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.CancellationException
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -86,11 +89,13 @@ fun RootView(model: AppModel) {
     var destination by rememberSaveable { mutableIntStateOf(0) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
     var showProfileHistory by rememberSaveable { mutableStateOf(false) }
+    var showAvatarPicker by rememberSaveable { mutableStateOf(false) }
 
     // 登录状态变化时回到房间详情 Tab。
     LaunchedEffect(user?.id) {
         destination = 0
         showProfileHistory = false
+        showAvatarPicker = false
         showAbout = false
     }
     // 切到「我的」打断房间内触控/发令；切回「房间详情」重新打开当前房间。
@@ -150,6 +155,7 @@ fun RootView(model: AppModel) {
                             api = model.api,
                             user = user!!,
                             onGuide = { onboarded = false },
+                            onEditAvatar = { showAvatarPicker = true },
                             leave = {
                                 val target = model.room
                                 scope.launch {
@@ -166,7 +172,7 @@ fun RootView(model: AppModel) {
                     }
                     2 -> if (user != null && model.api != null) SoloStartView(model.api!!, user!!) else LoginView(model, onHelp = { showHelp = true })
                     else -> if (user != null) {
-                        ProfileView(model = model, user = user!!, onOpenHistory = { showProfileHistory = true }, onAbout = { showAbout = true }, onHelp = { showHelp = true })
+                        ProfileView(model = model, user = user!!, onEditAvatar = { showAvatarPicker = true }, onOpenHistory = { showProfileHistory = true }, onAbout = { showAbout = true }, onHelp = { showHelp = true })
                     } else LoginView(model, onHelp = { showHelp = true })
                 }
             }
@@ -199,8 +205,11 @@ fun RootView(model: AppModel) {
         }
 
         // 个人中心的历史成绩全屏页。
+        if (showAvatarPicker && user != null && model.api != null) {
+            AvatarPicker(model, user!!, onDismiss = { showAvatarPicker = false })
+        }
         if (showProfileHistory && user != null && model.api != null) {
-            HistoryView(api = model.api!!, user = user!!, room = null, onBack = { showProfileHistory = false })
+            HistoryView(api = model.api!!, user = user!!, room = null, onBack = { showProfileHistory = false }, onEditAvatar = { showAvatarPicker = true })
         }
 
         if (showAbout) AboutView(onBack = { showAbout = false })
@@ -429,13 +438,18 @@ fun GuideView(
 
 /** 个人中心。 */
 @Composable
-fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout: () -> Unit = {}, onHelp: () -> Unit = {}) {
+fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout: () -> Unit = {}, onHelp: () -> Unit = {}, onEditAvatar: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val loading by model.loadingFlow.collectAsState()
 
     val syncNotice by model.syncNoticeFlow.collectAsState()
     val syncingRecords by model.syncingRecordsFlow.collectAsState()
-    LaunchedEffect(user.id) { model.scheduleSync() }
+    LaunchedEffect(user.id) {
+        model.scheduleSync()
+        try { model.refreshProfile() }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { model.error=e.message ?: "资料暂时无法刷新" }
+    }
     RTPage {
         RTBrand(showHelp = true, onHelp = onHelp, modifier = Modifier.rtEntrance(0))
         RTHero(badge = "个人中心", title = "我的", modifier = Modifier.rtEntrance(40))
@@ -445,15 +459,10 @@ fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout:
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Box(
-                    Modifier.size(72.dp).background(RT.aqua.copy(alpha = 0.22f), RoundedCornerShape(22.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        user.loginId.take(1).uppercase(),
-                        fontSize = 30.sp, fontWeight = FontWeight.Bold, color = RT.ink
-                    )
+                Box(Modifier.clickable(onClick=onEditAvatar).semantics { contentDescription = "修改头像" }) {
+                    UserAvatar(user.avatar,user.loginId,72.dp)
                 }
+                Text("点击头像更换",fontSize=12.sp,color=RT.muted)
                 Text(user.loginId, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RT.ink)
                 Text("账号 ID：${user.id}", fontSize = 12.sp, color = RT.muted)
                 Text("● 已登录", fontSize = 12.sp, color = RT.deep)

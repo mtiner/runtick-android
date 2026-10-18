@@ -6,6 +6,7 @@ import cc.runtick.app.core.*
 import cc.runtick.app.network.APIClient
 import cc.runtick.app.services.*
 import kotlinx.coroutines.*
+import kotlinx.serialization.json.*
 import okhttp3.mockwebserver.*
 import org.junit.*
 import org.junit.Assert.*
@@ -21,6 +22,9 @@ class AppFlowRegressionTest {
     private var currentRoom: String? = null
     private var delayEvents = false
     private var failEvents = false
+    @Volatile private var avatar: String? = null
+    @Volatile private var rejectAvatar = false
+    @Volatile private var delayAvatar = false
     private val store = MemoryPendingStore()
     private lateinit var api: APIClient
     private fun response(body: String, code: Int = 200) = MockResponse().setResponseCode(code).setHeader("Content-Type", "application/json").setBody(body)
@@ -29,7 +33,15 @@ class AppFlowRegressionTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.path.orEmpty(); requests.add("${request.method} $path")
                 return when {
-                    path == "/api/auth/me" || path == "/api/auth/login" -> response("""{"ok":true,"data":{"user":{"id":71,"loginId":"runner"}}}""")
+                    path == "/api/auth/avatar" -> {
+                        if (rejectAvatar) response("""{"ok":false,"error":{"code":"VALIDATION","message":"请选择图库头像"}}""",400)
+                        else {
+                            avatar=AppJson.parseToJsonElement(request.body.readUtf8()).jsonObject["avatar"]!!.jsonPrimitive.content
+                            response("""{"ok":true,"data":{"user":${AppJson.encodeToString(User.serializer(),User(71,"runner",avatar))}}}""")
+                                .also { if(delayAvatar) it.setHeadersDelay(1,TimeUnit.SECONDS) }
+                        }
+                    }
+                    path == "/api/auth/me" || path == "/api/auth/login" -> response("""{"ok":true,"data":{"user":${AppJson.encodeToString(User.serializer(),User(71,"runner",avatar))}}}""")
                     path == "/api/rooms/current" -> response("""{"ok":true,"data":{"room":${currentRoom?.let { "{\"code\":\"$it\",\"status\":\"active\"}" } ?: "null"}}}""")
                     path.contains("/clock") -> response("""{"ok":false,"error":{"code":"UNAVAILABLE"}}""", 503)
                     path.contains("/events") && (failEvents || path.contains("obsolete")) -> response("""{"ok":false,"error":{"code":"FORBIDDEN"}}""", 403)
@@ -123,6 +135,30 @@ class AppFlowRegressionTest {
             api.request("/malformed-user") { AppJson.decodeFromJsonElement(User.serializer(), it) }
             fail("Malformed response must fail")
         } catch (e: ClientError) { assertEquals("暂时无法读取服务器响应，请稍后重试。", e.message) }
+    } }
+
+    @Test fun avatarSavePersistsRawFilenameAndFailureKeepsPreviousAvatar() = runBlocking { main {
+        val app=AppModel(context,store,api)
+        try {
+            app.login("runner","pw")
+            app.updateAvatar("Nike Dragonfly.png")
+            assertEquals("Nike Dragonfly.png",app.user?.avatar)
+            assertTrue(requests.any { it=="PATCH /api/auth/avatar" })
+            rejectAvatar=true
+            try { app.updateAvatar("Nike Maxfly 2.png"); fail("Rejected save must fail") } catch(e: ClientError) { assertEquals(400,e.status) }
+            assertEquals("Nike Dragonfly.png",app.user?.avatar)
+            rejectAvatar=false; app.restore()
+            assertEquals("Nike Dragonfly.png",app.user?.avatar)
+        } finally { app.clearSession(); app.close() }
+    } }
+    @Test fun lateAvatarSaveCannotRestoreLoggedOutUser() = runBlocking { main {
+        val app=AppModel(context,store,api)
+        try {
+            app.login("runner","pw"); delayAvatar=true
+            val task=launch { try { app.updateAvatar("Nike Dragonfly.png") } catch(_: CancellationException) {} }
+            withTimeout(5000) { while(!requests.any { it=="PATCH /api/auth/avatar" }) delay(10) }
+            app.clearSession(); task.join(); assertNull(app.user)
+        } finally { app.clearSession(); app.close() }
     } }
 
 }

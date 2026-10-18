@@ -20,6 +20,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,7 +46,7 @@ import java.util.Locale
 // ---- 历史成绩响应 DTO（ui 层内解析，避免依赖 core 序列化注解） ----
 
 @Serializable
-data class HistoryAthlete(val id: Long, val loginId: String)
+data class HistoryAthlete(val id: Long, val loginId: String, val avatar: String? = null)
 
 @Serializable
 data class HistoryRecordDto(
@@ -74,7 +76,7 @@ data class HistoryData(
  * room 非空时请求带 room 参数（房间内查看本房间成绩）。
  */
 @Composable
-fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
+fun HistoryView(api: APIClient, user: User, room: String?, onEditAvatar: (() -> Unit)? = null, onBack: () -> Unit) {
     androidx.activity.compose.BackHandler(onBack = onBack)
     var showSolo by remember { mutableStateOf(false) }
     if (showSolo) { SoloHistoryView(api, onBack = { showSolo = false }); return }
@@ -114,7 +116,7 @@ fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
     }
 
     // 筛选或刷新标记变化时重新加载。
-    LaunchedEffect(athleteId, distance, sort, offset, reloadKey) { load() }
+    LaunchedEffect(athleteId, distance, sort, offset, reloadKey, user.avatar) { load() }
 
     Box(Modifier.fillMaxSize()) {
         RTPage {
@@ -140,6 +142,14 @@ fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
             RTButton(onClick = { showSolo = true }) { RTButtonInkText("单人起跑记录") }
             RTCard(title = "筛选") {
                 val current = data
+                current?.athletes?.firstOrNull { it.id == athleteId }?.let { athlete ->
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        if(athlete.id==user.id && onEditAvatar!=null) {
+                            Box(Modifier.clickable(onClick=onEditAvatar).semantics { contentDescription="修改头像" }) { UserAvatar(athlete.avatar,athlete.loginId,32.dp) }
+                        } else UserAvatar(athlete.avatar,athlete.loginId,32.dp)
+                        Spacer(Modifier.size(8.dp)); Text(athlete.loginId,color=RT.ink)
+                    }
+                }
                 if (current != null && current.athletes.size > 1) {
                     FilterChipRow(
                         options = current.athletes.map { athlete ->

@@ -71,6 +71,7 @@ class AppModel(private val appContext: Context, store: PendingStore? = null, pri
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var syncTask: Job? = null
     private var syncGeneration = UUID.randomUUID()
+    private var profileRevision = UUID.randomUUID()
     private var resolvingRoom = false
     private val _syncNotice = MutableStateFlow("")
     val syncNoticeFlow: StateFlow<String> get() = _syncNotice
@@ -171,6 +172,26 @@ class AppModel(private val appContext: Context, store: PendingStore? = null, pri
         scheduleSync()
     }
 
+    suspend fun updateAvatar(filename: String) {
+        val client = api ?: throw ClientError(401,null,"请先登录")
+        val current = user ?: throw ClientError(401,null,"请先登录")
+        val revision=UUID.randomUUID(); profileRevision=revision
+        val updated = client.request("/api/auth/avatar","PATCH",buildJsonObject { put("avatar",filename) }) { decodeUser(it) }
+        currentCoroutineContext().ensureActive()
+        if (profileRevision != revision || api !== client || user?.id != current.id || updated.id != current.id) throw CancellationException()
+        user = updated
+        room?.let { model -> model.members = model.members.map { if (it.loginId == current.loginId) it.copy(avatar=updated.avatar) else it } }
+        client.remember(updated)
+    }
+    suspend fun refreshProfile() {
+        val client = api ?: return
+        val current = user ?: return
+        val revision=profileRevision
+        val updated = client.request("/api/auth/me") { decodeUser(it) }
+        if (profileRevision != revision || api !== client || user?.id != current.id || updated.id != current.id) return
+        user = updated; client.remember(updated)
+    }
+
     /** 登出：通知服务器、清 Cookie、停房间。 */
     suspend fun logout() {
         try {
@@ -269,6 +290,7 @@ class AppModel(private val appContext: Context, store: PendingStore? = null, pri
     }
 
     fun clearSession() {
+        profileRevision=UUID.randomUUID()
         syncGeneration = UUID.randomUUID(); syncTask?.cancel(); syncTask = null
         _syncNotice.value = ""; _syncingRecords.value = false
         room?.stop(); room = null; user = null; lobbyReady = false

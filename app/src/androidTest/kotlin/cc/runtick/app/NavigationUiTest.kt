@@ -244,4 +244,39 @@ class NavigationUiTest {
         } finally { compose.runOnIdle { model.stop() } }
     }
 
+    @Test fun profileAvatarPickerSavesFilenameWithSpaces() {
+        var avatar: String?=null
+        server.dispatcher=object: Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if(request.path=="/api/avatars") return MockResponse().setHeader("Content-Type","application/json")
+                    .setBody("""{"ok":true,"data":{"avatars":[{"filename":"Nike Dragonfly.png"},{"filename":"Nike Maxfly 2.png"}]}}""")
+                if(request.path=="/api/auth/avatar") {
+                    assertEquals("PATCH",request.method)
+                    avatar=AppJson.parseToJsonElement(request.body.readUtf8()).jsonObject["avatar"]!!.jsonPrimitive.content
+                }
+                val body=if(request.path?.startsWith("/api/auth/")==true) """{"user":${AppJson.encodeToString(User.serializer(),User(71,"runner",avatar))}}""" else """{"room":null}"""
+                return MockResponse().setHeader("Content-Type","application/json").setBody("""{"ok":true,"data":$body}""")
+            }
+        }
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val app=cc.runtick.app.services.AppModel(context,suppliedClient=APIClient(server.url("/").toString()))
+        runBlocking { withContext(Dispatchers.Main) { app.login("runner","pw") } }
+        try {
+            compose.setContent { RunTickTheme {
+                val user by app.userFlow.collectAsState()
+                var picker by remember { mutableStateOf(false) }
+                ProfileView(app,user!!,onOpenHistory={},onEditAvatar={picker=true})
+                if(picker) AvatarPicker(app,user!!,onDismiss={picker=false})
+            } }
+            compose.onNodeWithContentDescription("修改头像").performClick()
+            compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Nike Dragonfly").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Nike Dragonfly").performClick()
+            screenshot("avatar-gallery")
+            compose.onNodeWithText("保存头像").performClick()
+            compose.waitUntil(10000) { app.user?.avatar=="Nike Dragonfly.png" }
+            compose.onNodeWithText("选择头像").assertDoesNotExist()
+            assertEquals("Nike Dragonfly.png",avatar)
+        } finally { runBlocking { withContext(Dispatchers.Main) { app.clearSession(); app.close() } } }
+    }
+
 }

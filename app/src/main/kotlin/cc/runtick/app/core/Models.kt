@@ -18,7 +18,7 @@ import kotlin.random.Random
 val AppJson: Json = Json { ignoreUnknownKeys = true; isLenient = true }
 
 @Serializable
-data class User(val id: Long, val loginId: String)
+data class User(val id: Long, val loginId: String, val avatar: String? = null)
 
 @Serializable
 data class SavedResult(val distance: Int, val isPb: Boolean, val pbImprovementMs: Double? = null)
@@ -189,6 +189,7 @@ data class MemberState(
     val deviceRole: String? = null,
     val online: Boolean = false,
     val role: String? = null,
+    val avatar: String? = null,
 )
 
 @Serializable
