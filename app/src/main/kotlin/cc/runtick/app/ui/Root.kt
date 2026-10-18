@@ -149,6 +149,7 @@ fun RootView(model: AppModel) {
                             model = room!!,
                             api = model.api,
                             user = user!!,
+                            onGuide = { onboarded = false },
                             leave = {
                                 val target = model.room
                                 scope.launch {

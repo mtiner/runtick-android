@@ -135,13 +135,18 @@ import java.util.UUID
 
 @Composable fun AboutView(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler(onBack = onBack)
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
     RTPage {
         RTBrand(); RTHero(badge = "关于", title = "RunTick · 燃刻", subtitle = "为每一次认真训练而生")
         RTCard(title = "让每一次出发，有迹可循") {
             Text("双端短跑计时、单人原声发令、起跑反应检测与训练成绩管理。", color = RT.ink)
+            Text("反应时如何测量", color = RT.ink)
             Text("将起点手机贴靠或固定在起跑器上并保持稳定，使用加速度计、陀螺仪与本机音频时钟计算枪声到检测到手机移动的时间差。", color = RT.ink)
             Text("小于 100 ms 标注抢跑；这是设备运动检测估算，受安装方式、采样率、扬声器振动及系统音频延迟影响，不能替代专业起跑器或用于正式比赛判罚。", color = RT.muted)
-            Text("运动采样仅在本机处理，服务器只保存时间差、检测状态及发令设置。未检测到移动不会记作零。官网：runtick.cc", color = RT.muted)
+            Text("数据与权限", color = RT.ink)
+            Text("运动采样仅在本机处理，服务器只保存时间差、检测状态及发令设置。未检测到移动不会记作零。单人模式不需要另一台手机；联网登录后同步记录。", color = RT.muted)
+            Text("版本 ${cc.runtick.app.BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = RT.muted)
+            TextButton(onClick = { uri.openUri("https://runtick.cc") }) { Text("访问官网 ↗", color = RT.deep) }
         }
         RTButton(onClick = onBack) { RTButtonInkText("返回我的") }
     }

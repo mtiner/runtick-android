@@ -107,15 +107,16 @@ class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Cont
         if (status == 401) unauthorized?.invoke()
         run {
             val envelope = runCatching { AppJson.parseToJsonElement(text).jsonObject }.getOrNull()
-            val ok = envelope?.get("ok")?.jsonPrimitive?.booleanOrNull
+            val ok = (envelope?.get("ok") as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull
             val data = envelope?.get("data")?.takeIf { it !is JsonNull }
-            val errorPayload = envelope?.get("error")?.jsonObject
-            val code = errorPayload?.get("code")?.jsonPrimitive?.contentOrNull
-            val message = errorPayload?.get("message")?.jsonPrimitive?.contentOrNull
+            val errorPayload = envelope?.get("error") as? kotlinx.serialization.json.JsonObject
+            val code = (errorPayload?.get("code") as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+            val message = (errorPayload?.get("message") as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
             if (status !in 200..299 || ok != true || data == null) {
                 throw ClientError(status, code ?: "UNKNOWN", when { status == 401 -> "登录状态已过期，请重新登录。"; status >= 500 -> "服务暂时不可用，请稍后重试。"; else -> message ?: "暂时无法读取服务器响应，请稍后重试。" })
             }
-            return decode(data)
+            try { return decode(data) }
+            catch (e: kotlinx.serialization.SerializationException) { throw ClientError(status, "INVALID_RESPONSE", "暂时无法读取服务器响应，请稍后重试。") }
         }
     }
 

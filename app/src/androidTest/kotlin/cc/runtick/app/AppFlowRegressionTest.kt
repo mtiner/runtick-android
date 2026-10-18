@@ -118,4 +118,11 @@ class AppFlowRegressionTest {
         try { model.race = race("remote", settings = listOf(StageDelay(false, 30.0, 30.0))); model.fire(true); assertTrue(model.error.contains("0～10")); assertTrue(requests.isEmpty()) }
         finally { model.stop() }
     } }
+    @Test fun malformedDataHasReadableErrorInsteadOfDecoderDetails() = runBlocking { main {
+        try {
+            api.request("/malformed-user") { AppJson.decodeFromJsonElement(User.serializer(), it) }
+            fail("Malformed response must fail")
+        } catch (e: ClientError) { assertEquals("暂时无法读取服务器响应，请稍后重试。", e.message) }
+    } }
+
 }

@@ -113,7 +113,7 @@ private fun formatStageSeconds(value: Double): String =
 /** 房间视图：连接状态、校时、角色选择、发令、终点触控与成绩展示。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
+fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, onGuide: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var soundCheck by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
@@ -225,7 +225,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
                                 Text(member.loginId, fontSize = 15.sp, color = RT.ink)
                                 Spacer(Modifier.weight(1f))
                                 Text(
-                                    "${roleTitle(if (member.loginId == user.loginId) role else if (model.roleSaving && role != null) (if (role == "start") "finish" else "start") else member.deviceRole)} · ${if (member.online) "在线" else "离线"}",
+                                    "${roleTitle(model.displayedRole(member))} · ${if (member.online) "在线" else "离线"}",
                                     fontSize = 13.sp, color = RT.muted
                                 )
                             }
@@ -320,7 +320,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit) {
             HistoryView(api = api, user = user, room = model.code, onBack = { showHistory = false })
         }
 
-        if (showHelp) RTGlobalHelpSheet(onDismiss = { showHelp = false })
+        if (showHelp) RTGlobalHelpSheet(onDismiss = { showHelp = false }, onGuide = onGuide)
         if (confirmExit) androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmExit = false },
             title = { Text("退出当前房间？") },

@@ -192,7 +192,7 @@ class AppModel(private val appContext: Context, store: PendingStore? = null, pri
         if (!lobbyReady) throw ClientError(0, null, "暂时无法确认房间状态，请重试恢复房间。")
         val path = if (code != null) "/api/rooms/$code/join" else "/api/rooms"
         val roomData = client.request(path, "POST") { decodeRoom(it) }
-        val model = RoomModel(appContext, client, currentUser, roomData.code)
+        val model = RoomModel(appContext, client, currentUser, roomData.code, pendingStore)
         room = model
         lobbyReady = false
         model.start()
@@ -458,6 +458,11 @@ class RoomModel(
     /** 展示角色：乐观值优先。 */
     val role: String?
         get() = roleSelection.effective(serverRole)
+
+    fun displayedRole(member: MemberState): String? {
+        val selected = roleSelection.optimistic ?: return member.deviceRole
+        return if (member.loginId == user.loginId) selected else if (selected == "start") "finish" else "start"
+    }
 
     /** 角色请求是否在途。 */
     val roleSaving: Boolean
