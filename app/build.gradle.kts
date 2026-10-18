@@ -13,8 +13,8 @@ android {
         applicationId = "cc.runtick.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = (project.findProperty("versionName") as String?) ?: "1.0.5"
+        versionCode = 7
+        versionName = (project.findProperty("versionName") as String?) ?: "1.0.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
