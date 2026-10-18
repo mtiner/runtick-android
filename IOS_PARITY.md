@@ -21,3 +21,9 @@
 - Android 请求桩回归：登录／恢复不退房、旧记录不阻塞、退出保留记录、校时快照、取消触控、旧轮归档、迟到响应保护、校时错误及远端设置校验。
 - Compose UI：原有返回键、安全区域、滑块、双端发令、角色后台切换测试；增加终点返回后再次进入、大字号顶部栏不相交及退出确认。
 - 模拟器不能替代双真机网络、扬声器输出及实际起跑器传感器校验。
+
+## 本轮实际验证与发布状态
+
+- 最终代码在本地使用 JDK 17、Android SDK 35、Gradle 8.10.2 构建成功；`testDebugUnitTest` 共 36 项、零失败；`assembleDebug` 与 `assembleDebugAndroidTest` 成功。
+- 新增的请求桩与 Compose 回归用例已编译，但本轮尚未运行通过。GitHub Actions 因账号付款／支出额度限制拒绝启动；本地无 KVM，软件模拟器首次启动仍未完成，因此不能将 UI 或双端真机行为标为已验证。
+- 准备版本为 1.0.5（versionCode 6）。未发布正式签名版本，也未替换固定下载地址的 1.0.4 安装包。恢复 Actions 额度后，应先运行同一提交的 Android validation / Android UI validation，通过后再按现有发布流程签名并部署。

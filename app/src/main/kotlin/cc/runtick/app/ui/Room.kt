@@ -222,8 +222,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         members.forEach { member ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(member.loginId, fontSize = 15.sp, color = RT.ink)
-                                Spacer(Modifier.weight(1f))
+                                Text(member.loginId, modifier = Modifier.weight(1f), fontSize = 15.sp, color = RT.ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                 Text(
                                     "${roleTitle(model.displayedRole(member))} · ${if (member.online) "在线" else "离线"}",
                                     fontSize = 13.sp, color = RT.muted
@@ -451,11 +450,14 @@ private fun CompletedSection(
             RTChip(text = "计时完成", lemon = true)
             // 大数字：宽度不足时降级字号。
             BoxWithConstraints {
-                val size = if (maxWidth < 300.dp) 42.sp else 62.sp
+                val value = String.format("%.3f", (race.elapsedMs ?: 0.0) / 1000.0)
+                val fontScale = LocalDensity.current.fontScale
+                val fitted = ((maxWidth.value - 36f * fontScale) / (value.length * 0.65f)).coerceIn(18f, 62f)
+                val size = (fitted / fontScale).sp
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        String.format("%.3f", (race.elapsedMs ?: 0.0) / 1000.0),
-                        fontSize = size, fontWeight = FontWeight.Bold, color = RT.ink
+                        value,
+                        fontSize = size, fontWeight = FontWeight.Bold, color = RT.ink, maxLines = 1, softWrap = false
                     )
                     Text("秒", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = RT.muted, modifier = Modifier.padding(bottom = 10.dp))
                 }
