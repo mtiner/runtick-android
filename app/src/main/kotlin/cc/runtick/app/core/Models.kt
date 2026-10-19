@@ -23,6 +23,8 @@ data class User(val id: Long, val loginId: String, val avatar: String? = null)
 @Serializable
 data class SavedResult(val distance: Int, val isPb: Boolean, val pbImprovementMs: Double? = null)
 
+@Serializable data class CuePoint(val stage: Int,val at: Double)
+@Serializable data class RoomPoll(val members: List<MemberState>,val ready: Boolean,val starterSettings: List<StageDelay>,val race: Race? = null)
 @Serializable
 data class Race(
     val id: String,
@@ -37,6 +39,8 @@ data class Race(
     val starterSettings: List<StageDelay>? = null,
     val savedResult: SavedResult? = null,
     val reactionMs: Double? = null, val reactionStatus: String? = null,
+    val cueTimeline: List<CuePoint>? = null,
+    val discarded: Boolean = false
 ) {
     /** ready/running 视为进行中。 */
     val active: Boolean get() = status == "ready" || status == "running"
@@ -50,7 +54,7 @@ data class Race(
         if (newer.createdAt < createdAt) return false
         if (newer.id != id) return true
         return !(!active && newer.active) &&
-            !(savedResult != null && newer.savedResult == null) &&
+            !(savedResult != null && newer.savedResult == null && !newer.discarded) &&
             !(startAt != null && newer.startAt == null) &&
             !(finishAt != null && newer.finishAt == null)
     }

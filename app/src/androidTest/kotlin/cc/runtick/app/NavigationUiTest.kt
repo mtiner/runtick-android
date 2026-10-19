@@ -49,7 +49,7 @@ class NavigationUiTest {
                         """{"ok":true,"data":{"race":{"id":"auto-plan","status":"running","createdAt":1,"startUserId":2,"finishUserId":1,"startAt":$at}}}""")
                 }
                 if (request.method == "POST" && request.path == "/api/rooms/1234/races") {
-                    val settings = AppJson.parseToJsonElement(request.body.readUtf8()).jsonObject["starterSettings"]!!
+                    val settings = StageDelay.defaults().let { AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()),it) }
                     return MockResponse().setHeader("Content-Type", "application/json").setBody(
                         """{"ok":true,"data":{"race":{"id":"ui-test-race","status":"ready","createdAt":1,"startUserId":2,"finishUserId":1,"starterSettings":$settings}}}""")
                 }
@@ -134,7 +134,6 @@ class NavigationUiTest {
         try {
             compose.setContent { RunTickTheme { RTSafeArea { RoomView(model, api, User(1, "test"), leave = {}) } } }
             compose.onNodeWithText("开始记录").performScrollTo().performClick()
-            compose.onNodeWithText("确认并开始记录").performScrollTo().performClick()
             compose.waitUntil(10000) { model.race?.active == true }
             compose.waitUntil(10000) {
                 runCatching { compose.onNodeWithText("按住屏幕，等待冲线").assertIsDisplayed(); true }.getOrDefault(false)

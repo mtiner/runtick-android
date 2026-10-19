@@ -48,12 +48,12 @@ class StarterAudio(private val context: Context) {
      * 调度三段音频并依次回调提示语，返回 (枪声时刻ms, 额外不确定度ms=20)。
      * clicked 为点击「发令」的本地单调时刻。
      */
-    suspend fun fire(clicked: Double, delays: List<StageDelay>, onCue: (String) -> Unit, onDeadline: (Double?) -> Unit = {}): Pair<Double, Double> {
+    suspend fun fire(clicked: Double, delays: List<StageDelay>, onCue: (String) -> Unit, onDeadline: (Double?) -> Unit = {}, scheduledTimes: List<Double>? = null): Pair<Double, Double> {
         stop()
         if (delays.size != 3 || delays.any { !it.valid }) {
             throw ClientError(0, null, "等待时间须为 0–10 秒，随机上限不得小于下限")
         }
-        val indices = if (!delays[0].enabled) listOf(1, 2) else listOf(0, 1, 2)
+        val indices = (0..2).filter { it==2 || delays[it].enabled }
         val clips = indices.map { loadWav(listOf("on_your_marks", "set", "gun")[it]) }
         val sampleRate = clips[0].sampleRate
         if (clips.any { it.sampleRate != sampleRate || it.channels != clips[0].channels }) {
@@ -72,6 +72,10 @@ class StarterAudio(private val context: Context) {
             times.add(at)
         }
 
+        if(scheduledTimes!=null) {
+            if(scheduledTimes.size!=times.size || scheduledTimes.first()<anchor+100) throw ClientError(0,null,"发令准备已超时，请返回房间重新开始")
+            times.clear(); times.addAll(scheduledTimes)
+        }
         val token = generation.incrementAndGet()
         val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = audioScope

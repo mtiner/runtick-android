@@ -65,6 +65,12 @@ class ModelsTest {
         assertFalse(saved.accepts(completedRace()))
     }
 
+    @Test
+    fun `显式删除可清除已保存成绩`() {
+        val saved = completedRace().copy(savedResult = SavedResult(100, true, null))
+        assertTrue(saved.accepts(completedRace().copy(status = "cancelled", discarded = true)))
+    }
+
     // ---------- StageDelay ----------
 
     @Test

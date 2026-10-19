@@ -11,7 +11,6 @@ import cc.runtick.app.core.ClientError
 import cc.runtick.app.core.ClockMapping
 import cc.runtick.app.core.ClockResponse
 import cc.runtick.app.core.ClockSample
-import cc.runtick.app.core.HubState
 import cc.runtick.app.core.MemberState
 import cc.runtick.app.core.MonotonicClock
 import cc.runtick.app.core.PendingEvent
@@ -49,8 +48,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
@@ -229,24 +226,7 @@ class AppModel(private val appContext: Context, store: PendingStore? = null, pri
     }
 
     suspend fun openCurrentRoom() {
-        val client = api ?: return
-        val currentUser = user ?: return
-        if (resolvingRoom) return
-        resolvingRoom = true
-        try {
-            val current = client.request("/api/rooms/current") { decodeCurrentRoomCode(it) }
-            currentCoroutineContext().ensureActive()
-            if (api !== client || user?.id != currentUser.id) return
-            if (current == null) {
-                room?.stop(); room = null; lobbyReady = true
-            } else if (room?.code == current) {
-                room?.resume()
-            } else {
-                room?.stop()
-                room = RoomModel(appContext, client, currentUser, current, pendingStore).also { it.start() }
-                lobbyReady = false
-            }
-        } finally { resolvingRoom = false }
+        if(room!=null) room?.resume() else lobbyReady=true
     }
 
     fun scheduleSync(showConfirmation: Boolean = false) {
@@ -332,7 +312,7 @@ class AppModel(private val appContext: Context, store: PendingStore? = null, pri
 }
 
 /**
- * 房间状态机：校时、角色选择、发令/冲线、事件补交与 WebSocket 同步。
+ * 房间状态机：校时、角色选择、发令/冲线、事件补交与 HTTP 房间同步。
  * 所有字段保留可直接读取的 var，同时以 StateFlow 暴露给 Compose。
  */
 class RoomModel(
@@ -355,7 +335,6 @@ class RoomModel(
     private var eventClock: ClockMapping? = null
     private var recordingClock: ClockMapping? = null
     private var fireGeneration = UUID.randomUUID()
-    private var webSocket: WebSocket? = null
     private var stopped = false
     private var started = false
     private var receivedRoomState = false
@@ -503,7 +482,7 @@ class RoomModel(
             }
         }
 
-    /** 启动三个协程：初始校时、1 秒轮询 /races（含自动补交）、WebSocket 同步。 */
+    /** 启动初始校时和串行 HTTP 房间轮询（含自动补交）。 */
     fun start() {
         if (started || stopped) return
         started = true
@@ -527,7 +506,7 @@ class RoomModel(
         networkCallback=callback
         manager.registerDefaultNetworkCallback(callback)
         scope.launch { pollLoop() }
-        scope.launch { socketLoop() }
+
     }
 
     /** 接受不回退的 race 更新；比赛结束即复位发令状态。 */
@@ -553,14 +532,12 @@ class RoomModel(
 
     val hasRecordingClock: Boolean get() = recordingClock != null || clock?.fresh == true
 
-    /** 停止全部协程与 WebSocket。 */
+    /** 停止全部房间协程。 */
     fun stop() {
         networkCallback?.let { callback -> runCatching { (context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).unregisterNetworkCallback(callback) } }
         networkCallback=null
         stopped = true
         scope.cancel()
-        runCatching { webSocket?.cancel() }
-        webSocket = null
         connected = false
         audio.stop(); reactionMotion.end(if (race?.status == "completed") "timeout" else "cancelled")
         interrupt()
@@ -583,7 +560,7 @@ class RoomModel(
         if (clock?.fresh != true && (race?.active != true || recordingClock == null)) {
             scope.launch { calibrate() }
         }
-        runCatching { webSocket?.send("{\"type\":\"ping\"}") }
+
     }
 
     /** Native NTP sampling; preserve the last result on failure. */
@@ -591,13 +568,16 @@ class RoomModel(
         val prefs=context.getSharedPreferences("runtick.device",Context.MODE_PRIVATE)
         prefs.getString("installationId",null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("installationId",it).apply() }
     }
+    private val _syncMetrics=MutableStateFlow<Pair<Double?,Double?>>(null to null)
+    val syncMetricsFlow: StateFlow<Pair<Double?,Double?>> get()=_syncMetrics
     val syncTarget get() = cc.runtick.app.core.AppTimeSync.target
+    var editingSettings=false
     var allowHTTPFallback = false
     var syncError = ""
     private var needsResync = false
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     val syncSummary: String get() {
-        if (syncing) return "正在同步时间…"
+        if (syncing) return "正在校准 $progress/$syncTarget"
         val value=recordingClock ?: clock ?: return if(syncError.isEmpty()) "尚未同步时间" else "时间同步失败，请重试"
         if(!value.fresh) return "时间同步已过期，请重新同步"
         return if(syncError.isEmpty()) "时间已同步" else "时间同步质量下降，请重新同步"
@@ -610,13 +590,13 @@ class RoomModel(
         progress = 0
         error = ""
         try {
-            try { clock = synchronizeTime { progress = it; android.util.Log.d("RunTickTimeSync",cc.runtick.app.core.AppTimeSync.detail) }; syncError = ""; needsResync = false }
+            try { clock = synchronizeTime { progress = it; _syncMetrics.value=cc.runtick.app.core.AppTimeSync.latestRTT to cc.runtick.app.core.AppTimeSync.averageRTT; android.util.Log.d("RunTickTimeSync",cc.runtick.app.core.AppTimeSync.detail) }; syncError = ""; needsResync = false }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (!allowHTTPFallback) throw e
                 clock = httpFallback(); syncError = "主时间源不可用，使用应用 API HTTP 备用源"; needsResync = false
             }
-            clock?.let { android.util.Log.d("RunTickNTP", "server=${it.server} samples=${it.validSamples} RTT=${it.avgRttMs} offset=${it.offsetMs} age=${it.ageMs} estimatedUncertainty=${it.estimatedUncertaintyMs}") }
+            clock?.let { _syncMetrics.value=(cc.runtick.app.core.AppTimeSync.latestRTT ?: it.avgRttMs) to (cc.runtick.app.core.AppTimeSync.averageRTT ?: it.avgRttMs); android.util.Log.d("RunTickNTP", "server=${it.server} samples=${it.validSamples} RTT=${it.avgRttMs} offset=${it.offsetMs} age=${it.ageMs} estimatedUncertainty=${it.estimatedUncertaintyMs}") }
             if (race?.active == true && recordingClock == null) recordingClock = clock
         } catch (e: CancellationException) {
             throw e
@@ -666,10 +646,21 @@ class RoomModel(
                 }
                 _roleRevision.value++
             }
-            runCatching { webSocket?.send("{\"type\":\"sync\"}") }
+
         }
     }
 
+    suspend fun saveRoomSettings() {
+        api.request("/api/rooms/$code/settings","PUT",buildJsonObject {
+            put("starterSettings",AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()),stages))
+        }) { }
+    }
+    fun stageText(now: Double = MonotonicClock.now()): String {
+        if(race?.startAt!=null) return "计时中"
+        val mapping=recordingClock ?: clock ?: return "等待发令"
+        val point=race?.cueTimeline?.lastOrNull { it.at<=mapping.utcAt(now) } ?: return "等待发令"
+        return listOf("各就各位","预备","枪声")[point.stage.coerceIn(0,2)]
+    }
     suspend fun beginRecording() {
         if (pending != null) { error = "上一轮计时记录尚未同步，请重新同步后再开始。"; return }
         if (needsResync || clock?.fresh != true) { if (needsResync) timeSync.invalidate(); calibrate() }
@@ -697,7 +688,7 @@ class RoomModel(
         val currentRace = race
         val path = if (action == "start") "/api/rooms/$code/races"
         else "/api/rooms/$code/races/${currentRace?.id ?: throw ClientError(0, null, "当前没有比赛")}/$action"
-        val body = if (action == "start") buildJsonObject { put("starterSettings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), stages)) } else null
+        val body: JsonObject? = null
         val data = api.request(path, "POST", body) { decodeRace(it) }
         if (action == "start" && data?.starterSettings == null) throw ClientError(0, null, "发令设置暂时未能同步，请返回房间重试。")
         data?.let { update(it) }
@@ -722,9 +713,6 @@ class RoomModel(
             }
             return
         }
-        if (!allowReducedVolume && AudioReadiness.volumePercent(context) < 100) {
-            _volumeWarning.value = true; return
-        }
         _volumeWarning.value = false
         val clockSnapshot = snapshot!!
         val token = UUID.randomUUID(); fireGeneration = token
@@ -736,7 +724,7 @@ class RoomModel(
             currentCoroutineContext().ensureActive()
             if (fireGeneration != token || stopped || race?.id != raceId || race?.active != true) return
             val clicked = MonotonicClock.now()
-            val (gunAt, extra) = audio.fire(clicked, settings, onCue = { if (fireGeneration == token) cue = it }, onDeadline = { if (fireGeneration == token) cueDeadline = it })
+            val (gunAt, extra) = audio.fire(clicked, settings, scheduledTimes = race?.cueTimeline?.map { point -> val now=MonotonicClock.now(); now+point.at-clockSnapshot.utcAt(now) }, onCue = { if (fireGeneration == token) cue = it }, onDeadline = { if (fireGeneration == token) cueDeadline = it })
             if (fireGeneration != token || stopped || race?.id != raceId || race?.active != true) return
             capture("start", gunAt, clockSnapshot, extra)
             reactionMotion.gun(gunAt) { result ->
@@ -838,92 +826,19 @@ class RoomModel(
 
     // ---------- 内部实现 ----------
 
-    /** 1 秒轮询比赛状态，含 pending 自动补交。 */
+    /** One non-overlapping HTTP state request also renews presence. */
     private suspend fun pollLoop() {
-        try {
-            val detail = api.request("/api/rooms/$code") { decodeRoomDetail(it) }
-            if (!receivedRoomState) members = detail.members
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            error = e.message ?: "发生未知错误"
-        }
-        while (!stopped && currentCoroutineContext().isActive) {
+        while(!stopped && currentCoroutineContext().isActive) {
             try {
-                val data = api.request("/api/rooms/$code/races") { decodeRace(it) }
-                if (data != null) update(data) else archivePending()
-                if (pending != null && autoRetry && MonotonicClock.now() >= retryAfter) submit()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                val status = (e as? ClientError)?.status ?: 0
-                if (!(race?.active == true && hasRecordingClock && (status == 0 || status >= 500))) error = e.message ?: "连接暂时中断，请重试。"
-            }
-            delay(1000)
-        }
-    }
-
-    /** WebSocket 循环：断线指数退避重连，收到首个 state 即恢复。 */
-    private suspend fun socketLoop() {
-        var retry = 0
-        while (!stopped && currentCoroutineContext().isActive) {
-            connected = false
-            ready = false
-            val receivedState = AtomicBoolean(false)
-            val closed = CompletableDeferred<Throwable>()
-            val ws = api.client.newWebSocket(api.socketRequest(code), object : WebSocketListener() {
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    handleSocketMessage(text, receivedState)
-                }
-
-                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    closed.complete(ClientError(code, null, reason.ifEmpty { "连接已关闭" }))
-                }
-
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    closed.complete(t)
-                }
-            })
-            webSocket = ws
-            val heartbeat = scope.launch {
-                while (currentCoroutineContext().isActive) {
-                    delay(30_000)
-                    runCatching { ws.send("{\"type\":\"ping\"}") }
-                }
-            }
-            try {
-                ws.send("{\"type\":\"sync\"}")
-                throw closed.await()
-            } catch (e: CancellationException) {
-                heartbeat.cancel()
-                runCatching { ws.cancel() }
-                throw e
-            } catch (e: Throwable) {
-                connected = false
-                ready = false
-            }
-            heartbeat.cancel()
-            runCatching { ws.cancel() }
-            if (stopped || !currentCoroutineContext().isActive) break
-            // 收到过 state 说明链路正常，退避从零开始
-            retry = if (receivedState.get()) 0 else retry + 1
-            val backoffSeconds = min(2.0.pow(min(retry, 4).toDouble()), 10.0)
-            delay((backoffSeconds * 1000).toLong())
-        }
-    }
-
-    /** 处理 state 消息；其余（含 pong）忽略。状态更新统一切回主线程。 */
-    private fun handleSocketMessage(text: String, receivedState: AtomicBoolean) {
-        val event = runCatching { AppJson.decodeFromString(HubState.serializer(), text) }.getOrNull() ?: return
-        if (event.type != "state") return
-        receivedState.set(true)
-        scope.launch {
-            connected = true
-            receivedRoomState = true
-            members = event.members ?: emptyList()
-            roleSelection.receivedServerState(serverRole)
-            _roleRevision.value++
-            ready = event.ready ?: false
+                val state=api.request("/api/rooms/$code/state","POST") { AppJson.decodeFromJsonElement(cc.runtick.app.core.RoomPoll.serializer(),it) }
+                connected=true; ready=state.ready; members=state.members
+                roleSelection.receivedServerState(serverRole); _roleRevision.value++
+                if(state.race!=null) update(state.race) else archivePending()
+                if(race?.active!=true && !busy && !editingSettings) stages=state.starterSettings
+                if(pending!=null && autoRetry && MonotonicClock.now()>=retryAfter) submit()
+            } catch(e: CancellationException) { throw e }
+            catch(e: Exception) { connected=false; ready=false; android.util.Log.d("RunTickRoom","Poll failed: ${e.message}") }
+            delay(if(!connected) 3000 else if(race?.active==true) 500 else 1000)
         }
     }
 

@@ -58,10 +58,10 @@ class AppFlowRegressionTest {
     private fun key() = "pending:${api.baseUrl.trimEnd('/')}:71:1234"
     private suspend fun main(block: suspend CoroutineScope.() -> Unit) = withContext(Dispatchers.Main, block)
 
-    @Test fun restoreKeepsExistingRoomWithoutLeaving() = runBlocking { main {
+    @Test fun restoreKeepsLoginWithoutReenteringRoom() = runBlocking { main {
         currentRoom = "1234"
         val app = AppModel(context, store, api)
-        try { app.restore(); assertEquals("1234", app.room?.code); assertFalse(app.lobbyReady); assertFalse(requests.any { it.contains("/leave") }) }
+        try { app.restore(); assertNull(app.room); assertTrue(app.lobbyReady); assertFalse(requests.any { it.contains("/rooms/current") }); assertFalse(requests.any { it.contains("/leave") }) }
         finally { app.clearSession(); app.close() }
     } }
     @Test fun loginWithNoRoomOpensLobbyWithoutLeaving() = runBlocking { main {

@@ -33,7 +33,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * API 客户端：统一信封解析（{ok, data, error}）、Cookie 会话、WebSocket 请求构造。
+ * API 客户端：统一信封解析（{ok, data, error}）、Cookie 会话。
  * 请求不携带 Origin 头（服务端同源校验只拦跨源 Origin）。
  */
 class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Context? = null) {
@@ -118,21 +118,6 @@ class APIClient(val baseUrl: String = AppConfiguration.SERVER_URL, context: Cont
             try { return decode(data) }
             catch (e: kotlinx.serialization.SerializationException) { throw ClientError(status, "INVALID_RESPONSE", "暂时无法读取服务器响应，请稍后重试。") }
         }
-    }
-
-    /**
-     * 构造 WebSocket 握手请求：手动携带 Cookie 头。
-     * OkHttp 4.x 的 HttpUrl 不支持 ws/wss scheme（会抛 IllegalArgumentException），
-     * 直接用 https URL——newWebSocket 会自动按 https→wss、http→ws 升级。
-     */
-    fun socketRequest(code: String): Request {
-        val httpUrl = url("/api/rooms/$code/ws")
-        val cookies = jar.loadForRequest(httpUrl)
-        val builder = Request.Builder().url(httpUrl)
-        if (cookies.isNotEmpty()) {
-            builder.header("Cookie", cookies.joinToString("; ") { "${it.name}=${it.value}" })
-        }
-        return builder.build()
     }
 
     /** 清空会话 Cookie（登出或 401 时调用）。 */

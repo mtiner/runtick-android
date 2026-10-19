@@ -1,259 +1,119 @@
 package cc.runtick.app.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import cc.runtick.app.core.AppJson
-import cc.runtick.app.core.User
+import androidx.compose.ui.unit.*
+import cc.runtick.app.core.*
 import cc.runtick.app.network.APIClient
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
+import kotlin.math.*
 
-// ---- 历史成绩响应 DTO（ui 层内解析，避免依赖 core 序列化注解） ----
+@Serializable data class HistoryAthlete(val id:Long,val loginId:String,val avatar:String?=null)
+@Serializable data class HistoryRecordDto(val raceId:String,val athleteId:Long,val recorderId:Long,val distance:Int,
+    val elapsedMs:Double,val performedAt:Double,val savedAt:Double,val isPb:Boolean=false,val pbImprovementMs:Double?=null,
+    val reactionMs:Double?=null,val reactionStatus:String?=null)
+@Serializable data class HistoryData(val athletes:List<HistoryAthlete> = emptyList(),val athleteId:Long=0,
+    val distances:List<Int> = emptyList(),val records:List<HistoryRecordDto> = emptyList(),val hasMore:Boolean=false,val nextCursor:String?=null)
+internal data class FilterOption(val id:String,val label:String)
 
-@Serializable
-data class HistoryAthlete(val id: Long, val loginId: String, val avatar: String? = null)
-
-@Serializable
-data class HistoryRecordDto(
-    val reactionMs: Double? = null, val reactionStatus: String? = null,
-    val raceId: String,
-    val athleteId: Long,
-    val recorderId: Long,
-    val distance: Int,
-    val elapsedMs: Double,
-    val performedAt: Double,
-    val savedAt: Double,
-    val isPb: Boolean = false,
-    val pbImprovementMs: Double? = null
-)
-
-@Serializable
-data class HistoryData(
-    val athletes: List<HistoryAthlete> = emptyList(),
-    val athleteId: Long = 0,
-    val distances: List<Int> = emptyList(),
-    val records: List<HistoryRecordDto> = emptyList(),
-    val hasMore: Boolean = false
-)
-
-/**
- * 历史成绩页：运动员 / 距离 / 排序筛选 + 分页。
- * room 非空时请求带 room 参数（房间内查看本房间成绩）。
- */
 @Composable
-fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
-    androidx.activity.compose.BackHandler(onBack = onBack)
-    var showSolo by remember { mutableStateOf(false) }
-    if (showSolo) { SoloHistoryView(api, onBack = { showSolo = false }); return }
-    var data by remember { mutableStateOf<HistoryData?>(null) }
-    var athleteId by remember { mutableStateOf(user.id) }
-    var distance by remember { mutableStateOf(0) }
-    var sort by remember { mutableStateOf("date-desc") }
-    var offset by remember { mutableStateOf(0) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
-    var reloadKey by remember { mutableStateOf(0) }
-
-    // 筛选条件变化时重置分页。
-    LaunchedEffect(athleteId) { distance = 0; offset = 0 }
-    LaunchedEffect(distance) { offset = 0 }
-    LaunchedEffect(sort) { offset = 0 }
-
-    suspend fun load() {
-        loading = true; error = ""
+fun HistoryView(api:APIClient,user:User,room:String?,onBack:()->Unit) {
+    androidx.activity.compose.BackHandler(onBack=onBack)
+    var showSolo by remember {mutableStateOf(false)}
+    if(showSolo) {SoloHistoryView(api,onBack={showSolo=false});return}
+    val scope=rememberCoroutineScope();val list=rememberLazyListState()
+    var data by remember {mutableStateOf<HistoryData?>(null)}
+    var athleteId by remember {mutableStateOf(user.id)}
+    var distance by remember {mutableStateOf(0)}
+    var distanceIndex by remember {mutableFloatStateOf(0f)}
+    var sort by remember {mutableStateOf("date-desc")}
+    var loading by remember {mutableStateOf(false)}
+    var error by remember {mutableStateOf("")}
+    var generation by remember {mutableIntStateOf(0)}
+    val filter="$athleteId:$distance:$sort:${user.avatar}"
+    suspend fun load(reset:Boolean) {
+        if(!reset && (loading || data?.hasMore!=true)) return
+        if(reset) {generation++;data=data?.copy(records=emptyList(),hasMore=false,nextCursor=null)}
+        val token=generation;val requested="$athleteId:$distance:$sort:${user.avatar}"
+        val previous=data
+        loading=true;error=""
         try {
-            val rule = sort.split("-")
-            var path = "/api/history?athleteId=${if (athleteId == 0L) user.id else athleteId}" +
-                "&sort=${rule[0]}&direction=${rule.getOrElse(1) { "desc" }}" +
-                "&offset=$offset&includeTrend=false"
-            if (distance > 0) path += "&distance=$distance"
-            if (room != null) path += "&room=$room"
-            val result: HistoryData = api.request(path) { element ->
-                AppJson.decodeFromJsonElement(HistoryData.serializer(), element)
-            }
-            data = result
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) {
-            error = e.message ?: "加载成绩未完成"
-        } finally {
-            loading = false
-        }
+            val rule=sort.split('-')
+            var path="/api/history?athleteId=$athleteId&limit=5&sort=${rule[0]}&direction=${rule[1]}&includeTrend=false"
+            if(!reset) previous?.nextCursor?.let {path+="&cursor=${android.net.Uri.encode(it)}"}
+            if(distance>0) path+="&distance=$distance"
+            if(room!=null) path+="&room=$room"
+            val result=api.request(path) {AppJson.decodeFromJsonElement(HistoryData.serializer(),it)}
+            currentCoroutineContext().ensureActive()
+            if(token!=generation || requested!="$athleteId:$distance:$sort:${user.avatar}") return
+            data=result.copy(records=((previous?.records ?: emptyList())+result.records).distinctBy {it.raceId})
+            if(distance!=0 && distance !in result.distances) {distance=0;distanceIndex=0f}
+        } catch(e:CancellationException) {throw e}
+        catch(e:Exception) {if(token==generation) error=e.message ?: "加载成绩失败"}
+        finally {if(token==generation) loading=false}
     }
-
-    // 筛选或刷新标记变化时重新加载。
-    LaunchedEffect(athleteId, distance, sort, offset, reloadKey, user.avatar) { load() }
-
-    Box(Modifier.fillMaxSize()) {
-        RTPage {
-            // 顶部返回行。
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(34.dp)
-                        .background(Color.White.copy(alpha = 0.75f), RoundedCornerShape(50))
-                        .clickable(onClick = onBack),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = RT.ink, modifier = Modifier.size(18.dp))
-                }
-                Spacer(Modifier.weight(1f))
-            }
-            RTHero(
-                badge = "训练档案",
-                title = "历史成绩",
-                subtitle = "每一次出发，都在向更好的自己靠近。",
-                modifier = Modifier.rtEntrance(40)
-            )
-            RTButton(onClick = { showSolo = true }) { RTButtonInkText("单人起跑记录") }
-            RTCard(title = "筛选") {
-                val current = data
-                current?.athletes?.firstOrNull { it.id == athleteId }?.let { athlete ->
-                    Row(verticalAlignment=Alignment.CenterVertically) {
-                        UserAvatar(athlete.avatar,athlete.loginId,32.dp)
-                        Spacer(Modifier.size(8.dp)); Text(athlete.loginId,color=RT.ink)
-                    }
-                }
-                if (current != null && current.athletes.size > 1) {
-                    FilterChipRow(
-                        options = current.athletes.map { athlete ->
-                            FilterOption(id = athlete.id.toString(), label = if (athlete.id == user.id) "我" else athlete.loginId)
-                        },
-                        selected = athleteId.toString(),
-                        onSelect = { athleteId = it.toLong() }
-                    )
-                }
-                FilterChipRow(
-                    options = listOf(FilterOption("0", "全部距离")) +
-                        (data?.distances ?: emptyList()).map { FilterOption(it.toString(), "$it 米") },
-                    selected = distance.toString(),
-                    onSelect = { distance = it.toInt() }
-                )
-                FilterChipRow(
-                    options = listOf(
-                        FilterOption("date-desc", "最新"),
-                        FilterOption("date-asc", "最早"),
-                        FilterOption("result-asc", "最快"),
-                        FilterOption("result-desc", "最慢")
-                    ),
-                    selected = sort,
-                    onSelect = { sort = it }
-                )
-            }
-            if (loading) {
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(color = RT.deep, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.padding(start = 8.dp))
-                    Text("加载成绩中…", fontSize = 13.sp, color = RT.muted)
-                }
-            }
-            if (error.isNotEmpty()) {
-                RTButton(onClick = { reloadKey++ }) { RTButtonInkText("重新加载成绩") }
-            }
-            data?.let { current ->
-                RTCard(title = "历史成绩") {
-                    if (current.records.isEmpty()) {
-                        Text("暂无成绩，完成计时后由终点填写距离并保存。", fontSize = 14.sp, color = RT.muted)
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        val dateFormat = remember { SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.getDefault()) }
-                        current.records.forEach { record ->
-                            Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                                Text("${record.distance} 米", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = RT.ink)
-                                Text(String.format("%.3f 秒", record.elapsedMs / 1000.0), fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = RT.ink)
-                                Text(dateFormat.format(Date(record.performedAt.toLong())), fontSize = 12.sp, color = RT.muted)
-                                if (record.reactionStatus != null) Text(cc.runtick.app.core.reactionText(record.reactionMs, record.reactionStatus), fontSize = 12.sp, color = RT.muted)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    if (record.reactionStatus == "false_start") RTChip("抢跑", lemon = true)
-                                    if (record.isPb) RTChip("PB", lemon = true)
-                                }
-                                androidx.compose.material3.HorizontalDivider(color = RT.ink.copy(alpha = 0.08f))
-                            }
-                        }
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    RTButton(
-                        modifier = Modifier.weight(1f),
-                        onClick = { offset = (offset - 50).coerceAtLeast(0) },
-                        enabled = offset > 0 && !loading
-                    ) { RTButtonInkText("上一页") }
-                    Spacer(Modifier.weight(1f))
-                    RTButton(
-                        modifier = Modifier.weight(1f),
-                        onClick = { offset += 50 },
-                        enabled = current.hasMore && !loading
-                    ) { RTButtonInkText("下一页") }
-                }
-            }
-            RTBrandFooter()
-        }
+    LaunchedEffect(filter) {load(true)}
+    LaunchedEffect(athleteId) {distance=0;distanceIndex=0f}
+    LaunchedEffect(list,data?.nextCursor,filter) {
+        snapshotFlow {list.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let {it>=list.layoutInfo.totalItemsCount-3} ?: false}
+            .distinctUntilChanged().collect {nearEnd->if(nearEnd && !loading && data?.hasMore==true) load(false)}
     }
-    RTErrorAlert(error, enabled = true)
+    val options=listOf(0)+(data?.distances ?: emptyList())
+    val dateFormat=remember {SimpleDateFormat("yyyy年M月d日 HH:mm",Locale.getDefault())}
+    LazyColumn(state=list,modifier=Modifier.fillMaxSize().rtBackdrop(),contentPadding=PaddingValues(24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
+        item {TextButton(onClick=onBack) {Text("返回")}}
+        item {RTHero(badge="训练档案",title="历史成绩",subtitle="每一次出发，都在向更好的自己靠近。")}
+        item {RTButton(onClick={showSolo=true}) {RTButtonInkText("单人起跑记录")}}
+        item {RTCard("筛选") {
+            if((data?.athletes?.size ?: 0)>1) FilterChipRow(data!!.athletes.map {FilterOption(it.id.toString(),if(it.id==user.id) "我" else it.loginId)},athleteId.toString()) {athleteId=it.toLong()}
+            val selected=options[distanceIndex.roundToInt().coerceIn(0,options.lastIndex)]
+            Text(if(selected==0) "距离：全部距离" else "距离：$selected 米",color=RT.ink)
+            Slider(value=distanceIndex.coerceIn(0f,max(1,options.lastIndex).toFloat()),onValueChange={distanceIndex=it.roundToInt().toFloat()},
+                onValueChangeFinished={distance=options[distanceIndex.roundToInt().coerceIn(0,options.lastIndex)]},
+                valueRange=0f..max(1,options.lastIndex).toFloat(),steps=max(0,options.size-2),enabled=options.size>1)
+            FilterChipRow(listOf(FilterOption("date-desc","最新"),FilterOption("date-asc","最早"),FilterOption("result-asc","最快"),FilterOption("result-desc","最慢")),sort) {sort=it}
+        }}
+        items(data?.records ?: emptyList(),key={it.raceId}) {record->
+            var shift by remember(record.raceId) {mutableFloatStateOf(0f)}
+            val width=with(androidx.compose.ui.platform.LocalDensity.current) {76.dp.toPx()}
+            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))) {
+                if(record.athleteId==user.id && shift>0) TextButton(onClick={scope.launch {
+                    try {api.request("/api/history/${record.raceId}","DELETE") {};load(true)} catch(e:Exception) {if(e is CancellationException) throw e;error=e.message ?: "删除失败"}
+                }},modifier=Modifier.align(Alignment.CenterStart)) {Text("删除",color=MaterialTheme.colorScheme.error)}
+                RTCard("${record.distance} 米",modifier=Modifier.offset {IntOffset(shift.roundToInt(),0)}.pointerInput(record.raceId,user.id) {
+                    if(record.athleteId==user.id) detectHorizontalDragGestures(onDragEnd={shift=if(shift>width/2) width else 0f}) {change,amount->change.consume();shift=(shift+amount).coerceIn(0f,width)}
+                }) {
+                    Text("%.3f 秒".format(record.elapsedMs/1000),fontSize=22.sp,fontWeight=FontWeight.Bold,color=RT.ink)
+                    Text(dateFormat.format(Date(record.performedAt.toLong())),fontSize=12.sp,color=RT.muted)
+                    Text(reactionText(record.reactionMs,record.reactionStatus),fontSize=12.sp,color=RT.muted)
+                    if(record.isPb) RTChip("PB",lemon=true)
+                }
+            }
+        }
+        if(loading) item {Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center) {CircularProgressIndicator(Modifier.size(24.dp),color=RT.deep)}}
+        if(error.isNotEmpty()) item {Text(error,color=MaterialTheme.colorScheme.error);RTButton(onClick={scope.launch {load(data==null)}}) {RTButtonInkText("重新加载成绩")}}
+        if(!loading && data?.records?.isEmpty()==true) item {Text("暂无成绩，完成计时后由终点填写距离并保存。",color=RT.muted)}
+        if(data?.records?.isNotEmpty()==true && data?.hasMore==false) item {Text("已加载全部成绩",color=RT.muted,fontSize=12.sp)}
+        item {RTBrandFooter()}
+    }
 }
-
-internal data class FilterOption(val id: String, val label: String)
-
-/** 筛选 chips 横向滚动行。 */
-@Composable
-private fun FilterChipRow(options: List<FilterOption>, selected: String, onSelect: (String) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        options.forEach { option ->
-            val isSelected = option.id == selected
-            Text(
-                option.label,
-                modifier = Modifier
-                    .background(
-                        if (isSelected) RT.aqua.copy(alpha = 0.30f) else RT.background,
-                        RoundedCornerShape(50)
-                    )
-                    .clickable { onSelect(option.id) }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                fontSize = 13.sp,
-                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                color = RT.ink
-            )
-        }
+@Composable private fun FilterChipRow(options:List<FilterOption>,selected:String,onSelect:(String)->Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+        options.forEach {option->Text(option.label,Modifier.background(if(option.id==selected) RT.aqua.copy(alpha=.3f) else RT.background,RoundedCornerShape(50)).clickable {onSelect(option.id)}.padding(horizontal=14.dp,vertical=8.dp),fontSize=13.sp,color=RT.ink)}
     }
 }

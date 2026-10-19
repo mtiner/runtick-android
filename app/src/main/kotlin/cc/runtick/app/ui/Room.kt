@@ -68,6 +68,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -197,7 +198,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                 }
                 if (syncing) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("正在同步时间…", fontSize = 12.sp, color = RT.muted)
+                        TimeSyncStatus(model)
                         LinearProgressIndicator(
                             progress = { progress.toFloat() / model.syncTarget },
                             modifier = Modifier.fillMaxWidth(),
@@ -222,10 +223,13 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                                 UserAvatar(member.avatar,member.loginId,36.dp)
                                 Spacer(Modifier.size(8.dp))
                                 Text(member.loginId, modifier = Modifier.weight(1f), fontSize = 15.sp, color = RT.ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                                Text(
-                                    "${roleTitle(model.displayedRole(member))} · ${if (member.online) "在线" else "离线"}",
-                                    fontSize = 13.sp, color = RT.muted
-                                )
+                                Box(Modifier.size(38.dp).shadow(if(member.online) 6.dp else 0.dp,CircleShape,ambientColor=RT.aqua,spotColor=RT.aqua)
+                                    .background((if(member.online) RT.aqua else Color.Gray).copy(alpha=.18f),CircleShape)
+                                    .border(1.dp,if(member.online) RT.deep else Color.Gray,CircleShape)
+                                    .semantics {contentDescription="${roleTitle(model.displayedRole(member))}，${if(member.online) "在线" else "离线"}"},contentAlignment=Alignment.Center) {
+                                    Icon(if(model.displayedRole(member)=="start") Icons.Filled.DirectionsRun else Icons.Filled.Flag,contentDescription=null,tint=if(member.online) RT.deep else Color.Gray)
+                                    if(!member.online) Icon(Icons.Filled.CloudOff,contentDescription=null,modifier=Modifier.size(12.dp).align(Alignment.BottomEnd),tint=Color.Gray)
+                                }
                             }
                         }
                     }
@@ -246,7 +250,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
             // 任一端确认设置后进入同一轮记录。
             if (role != null && (race == null || (!race.isActive && race.status != "completed"))) {
                 RTButton(
-                    onClick = { soundCheck = true },
+                    onClick = { scope.launch { model.beginRecording() } },
                     secondary = false,
                     enabled = ready && connected && clock != null && !syncing && !busy
                 ) { RTButtonText("开始记录") }
@@ -256,6 +260,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                 RTButton(onClick = { dismissedRecording = null }) { RTButtonInkText("进入记录页") }
             }
 
+            if(race?.isActive!=true) RTButton(onClick={model.editingSettings=true;soundCheck=true}) { RTButtonInkText("房间发令设置") }
             // 待提交时间戳。
             pending?.let { current ->
                 RTCard(title = "计时记录待同步") {
@@ -282,25 +287,24 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
         // 声音确认弹层。
         if (soundCheck) {
             ModalBottomSheet(
-                onDismissRequest = { soundCheck = false },
+                onDismissRequest = { soundCheck = false; model.editingSettings=false },
                 containerColor = RT.background
             ) {
                 RTPage {
                     RTCard(title = "发令设置") {
                         Text(
-                            "确认后双端进入记录页。建议调高媒体音量，使用手机扬声器。",
+                            "设置将用于房间内后续每轮训练。请调高媒体音量，使用手机扬声器。",
                             fontSize = 14.sp, lineHeight = 20.sp, color = RT.ink
                         )
-                        StageSettings(stages = stages, onChange = { model.stages = it })
+                        StageSettings(stages = stages, allowSetToggle = true, onChange = { model.stages = it })
                         RTButton(
                             onClick = {
-                                soundCheck = false
-                                scope.launch { model.beginRecording() }
+                                scope.launch { try { model.saveRoomSettings(); model.editingSettings=false; soundCheck=false } catch(e: Exception) { model.error=e.message ?: "保存设置失败" } }
                             },
                             secondary = false
-                        ) { RTButtonText("确认并开始记录") }
+                        ) { RTButtonText("保存设置") }
                     }
-                    RTButton(onClick = { soundCheck = false }) { RTButtonInkText("返回准备") }
+                    RTButton(onClick = { soundCheck = false; model.editingSettings=false }) { RTButtonInkText("返回准备") }
                 }
             }
         }
@@ -531,6 +535,7 @@ private fun CompletedSection(
         } else {
             Text("等待终点记录员填写距离并保存", fontSize = 14.sp, color = RT.ink)
         }
+        if(saved==null) RTButton(onClick={scope.launch {model.raceAction("discard")}},enabled=!busy,secondary=true) { RTButtonInkText("放弃保存本轮成绩") }
     }
 }
 
@@ -571,6 +576,11 @@ private fun FinishPad(model: RoomModel, loginId: String, leave: () -> Unit) {
     val content = Color(0xFF123D3B)
     Column(Modifier.fillMaxSize().background(background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         RecordingHeader("$loginId · 房间 ${model.code}", onBack = { model.cancelPress(); leave() })
+        var stage by remember { mutableStateOf(model.stageText()) }
+        LaunchedEffect(model) { while(true) { stage=model.stageText(); delay(50) } }
+        Box(Modifier.weight(1f).fillMaxWidth().background(RT.aqua.copy(alpha=0.2f)),contentAlignment=Alignment.Center) {
+            Text(stage,fontSize=36.sp,fontWeight=FontWeight.Bold,color=RT.ink)
+        }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val availableHeight = maxHeight.value
             val ringSize = (availableHeight * 0.25f).coerceIn(80f, 180f).dp
@@ -632,7 +642,6 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
     val syncing by model.syncingFlow.collectAsState()
     val pending by model.pendingFlow.collectAsState()
     val race by model.raceFlow.collectAsState()
-    val volumeWarning by model.volumeWarningFlow.collectAsState()
     val cue by model.cueFlow.collectAsState()
     val deadline by model.cueDeadlineFlow.collectAsState()
     var now by remember { mutableStateOf(MonotonicClock.now()) }
@@ -652,7 +661,7 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
                 Text(cue ?: "准备发令", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = RT.ink, textAlign = TextAlign.Center)
                 deadline?.let { Text(ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 96.sp, fontWeight = FontWeight.Bold, color = RT.ink) }
                 Text(if (race?.startAt == null) "跟随口令，准备出发" else "枪声已发出 · 等待冲线", color = RT.muted, textAlign = TextAlign.Center)
-                if (!firing && race?.startAt == null && pending == null && !volumeWarning) {
+                if (!firing && race?.startAt == null && pending == null) {
                     RTButton(onClick = { scope.launch { model.fire() } }, enabled = !syncing) { RTButtonInkText("重新发令") }
                 }
                 Spacer(Modifier.weight(1f))
@@ -660,14 +669,7 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
             }
         }
     }
-    if (volumeWarning) androidx.compose.material3.AlertDialog(
-        onDismissRequest = { model.dismissVolumeWarning() },
-        title = { Text("媒体音量未调至最大") },
-        text = { Text("建议调高媒体音量，以便听到口令和枪声。也可以按当前音量继续。") },
-        confirmButton = { androidx.compose.material3.TextButton(onClick = { scope.launch { model.fire(allowReducedVolume = true) } }) { Text("仍然开始") } },
-        dismissButton = { androidx.compose.material3.TextButton(onClick = { model.dismissVolumeWarning() }) { Text("先调整音量") } }
-    )
-    RTErrorAlert(model.errorFlow.collectAsState().value, enabled = !volumeWarning)
+    RTErrorAlert(model.errorFlow.collectAsState().value, enabled = true)
 }
 
 /** 顶部栏独立于滚动内容及触控区；导航文字适度限幅，正文保留系统字号。 */
@@ -686,5 +688,11 @@ private fun RecordingHeader(title: String, onBack: () -> Unit) {
 private fun TimeSyncStatus(model: RoomModel) {
     var text by remember { mutableStateOf(model.syncSummary) }
     LaunchedEffect(model) { while(true) { text=model.syncSummary; delay(1000) } }
-    Text(text,fontSize=12.sp,color=RT.muted,modifier=Modifier)
+    val metrics by model.syncMetricsFlow.collectAsState()
+    val syncing by model.syncingFlow.collectAsState()
+    Column(verticalArrangement=Arrangement.spacedBy(4.dp)) {
+        Text(text,fontSize=12.sp,color=RT.muted)
+        if(syncing) Text("此次 RTT ${metrics.first?.let { "%.1f ms".format(it) } ?: "—"} · 平均 RTT ${metrics.second?.let { "%.1f ms".format(it) } ?: "—"}",fontSize=12.sp,color=RT.muted)
+        else (metrics.second ?: model.clock?.avgRttMs)?.let { Text("平均 RTT %.1f ms".format(it),fontSize=12.sp,color=RT.muted) }
+    }
 }

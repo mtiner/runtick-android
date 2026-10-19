@@ -22,7 +22,7 @@ import java.util.Date
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun StageSettings(stages: List<StageDelay>, disabled: Boolean = false, onChange: (List<StageDelay>) -> Unit) {
+@Composable fun StageSettings(stages: List<StageDelay>, disabled: Boolean = false, allowSetToggle: Boolean = false, onChange: (List<StageDelay>) -> Unit) {
     fun update(index: Int, stage: StageDelay) { onChange(stages.toMutableList().also { it[index] = stage.normalized() }) }
     Row {
         Text("检测起跑反应时", modifier = Modifier.weight(1f), color = RT.ink)
@@ -33,9 +33,13 @@ import java.util.UUID
         Text("播放各就位口令", modifier = Modifier.weight(1f), color = RT.ink)
         Switch(checked = stages[0].enabled, onCheckedChange = { update(0, stages[0].copy(enabled = it)) }, enabled = !disabled)
     }
+    if(allowSetToggle) Row {
+        Text("播放预备口令",modifier=Modifier.weight(1f),color=RT.ink)
+        Switch(checked=stages[1].enabled,onCheckedChange={update(1,stages[1].copy(enabled=it))},enabled=!disabled)
+    }
     stages.forEachIndexed { index, stage ->
-        if (index != 0 || stages[0].enabled) {
-            val title = listOf("开始 → 各就位", if (stages[0].enabled) "各就位结束 → 预备" else "开始 → 预备", "预备结束 → 枪声")[index]
+        if (index==2 || stage.enabled) {
+            val title = listOf("开始 → 各就位", if (stages[0].enabled) "各就位结束 → 预备" else "开始 → 预备", if(stages[1].enabled) "预备结束 → 枪声" else if(stages[0].enabled) "各就位结束 → 枪声" else "开始 → 枪声")[index]
             Text(title, color = RT.ink)
             Row { Text("随机等待", modifier = Modifier.weight(1f), color = RT.muted)
                 Switch(checked = stage.random, onCheckedChange = { update(index, stage.copy(random = it, max = maxOf(stage.min, stage.max))) }, enabled = !disabled) }

@@ -69,6 +69,10 @@ class SuningTimeClient(
     private val exchange: (suspend ()->HTTPTimeSample)? = null,
     private val pause: suspend (Long)->Unit = { delay(it) },
 ) {
+    @Volatile var latestRTT: Double? = null
+        private set
+    @Volatile var averageRTT: Double? = null
+        private set
     @Volatile private var blockedUntil = Double.NEGATIVE_INFINITY
     // Isolated from API cookies and response caches. Redirects are rejected.
     private val client = OkHttpClient.Builder().callTimeout(config.timeoutMs,TimeUnit.MILLISECONDS)
@@ -76,6 +80,7 @@ class SuningTimeClient(
     suspend fun synchronize(report: (Int,String)->Unit = { _,_-> }): ClockMapping {
         if(MonotonicClock.now()<blockedUntil) throw HTTPTimeRateLimit(blockedUntil-MonotonicClock.now())
         require(config.validSamples>=3 && config.maxAttempts>=config.validSamples && config.intervalMs>=0 && config.timeoutMs>0 && config.maxRttMs>0 && config.maxSpreadMs>=0 && config.maximumAgeMs>0 && config.maximumUncertaintyMs>0 && config.endpoint.startsWith("https://")) { "HTTP 校时配置无效" }
+        latestRTT=null; averageRTT=null
         val samples = mutableListOf<HTTPTimeSample>(); var lastTimestamp: Double? = null
         var lastError = ""
         repeat(config.maxAttempts) { attempt ->
@@ -84,8 +89,10 @@ class SuningTimeClient(
             report(samples.size.coerceAtMost(config.validSamples),"苏宁 HTTP · 第 ${attempt+1} 次请求")
             try {
                 val sample = exchange?.invoke() ?: request()
+                latestRTT=sample.rtt
                 require(sample.rtt>=0 && sample.rtt<=config.maxRttMs && sample.offset.isFinite() && (lastTimestamp==null || sample.serverUTC>lastTimestamp!!)) { "延迟超标或服务器时间未推进" }
                 lastTimestamp=sample.serverUTC; samples.add(sample)
+                averageRTT=samples.map { it.rtt }.average()
                 report(samples.size.coerceAtMost(config.validSamples),"苏宁 HTTP · RTT %.1f ms · Offset %.1f ms".format(sample.rtt,sample.offset))
                 if(samples.size>=config.validSamples) {
                     val mapping = SuningTimeProtocol.select(samples.takeLast(config.validSamples),config)
@@ -139,6 +146,8 @@ object AppTimeSync {
     @Volatile private var httpLatest: ClockMapping? = null
     val latest get() = if(source==Source.NTP) NativeTimeSync.latest else httpLatest
     val target get() = if(source==Source.NTP) 8 else client.config.validSamples
+    val latestRTT get()=client.latestRTT
+    val averageRTT get()=client.averageRTT
     val detail get() = state.value.second
     fun invalidate() { stale=true; generation.incrementAndGet(); NativeTimeSync.invalidate() }
     suspend fun synchronize(progress: (Int)->Unit = {}): ClockMapping = coroutineScope {
