@@ -197,9 +197,9 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                 }
                 if (syncing) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("正在校准时间 $progress/8", fontSize = 12.sp, color = RT.muted)
+                        Text("正在校准时间 $progress/${model.syncTarget}", fontSize = 12.sp, color = RT.muted)
                         LinearProgressIndicator(
-                            progress = { progress / 8f },
+                            progress = { progress.toFloat() / model.syncTarget },
                             modifier = Modifier.fillMaxWidth(),
                             color = RT.deep,
                             trackColor = RT.aqua.copy(alpha = 0.18f)
@@ -212,7 +212,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                     )
                 }
                 RTButton(
-                    onClick = { scope.launch { model.calibrate() } },
+                    onClick = { scope.launch { model.calibrate(force = true) } },
                     enabled = !syncing && !firing && !model.pressed
                 ) { RTButtonInkText("重新校准时间") }
             }
@@ -624,7 +624,7 @@ private fun FinishPad(model: RoomModel, loginId: String, leave: () -> Unit) {
                 Spacer(Modifier.weight(1f))
             }
         }
-        if (!model.hasRecordingClock) RTButton(onClick = { scope.launch { model.calibrate() } }, modifier = Modifier.padding(16.dp)) { RTButtonInkText("重新校时") }
+        if (!model.hasRecordingClock) RTButton(onClick = { scope.launch { model.calibrate(force = true) } }, modifier = Modifier.padding(16.dp)) { RTButtonInkText("重新校时") }
     }
 
     // FinishPad 自己的错误弹窗。

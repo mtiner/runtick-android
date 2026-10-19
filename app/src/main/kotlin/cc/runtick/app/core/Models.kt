@@ -138,6 +138,7 @@ data class ClockMapping(
     val referenceMono: Long? = null,
     val referenceUTC: Double? = null,
 ) {
+    val syncSource: String get() = if(server == "HTTP" || server == "f.m.suning.com") "HTTP" else "NTP"
     /** 校时结果 120 秒内视为新鲜。 */
     fun utcAt(localMs: Double): Double = if (referenceMono != null && referenceUTC != null) referenceUTC + (MonotonicClock.nanosAt(localMs)-referenceMono)/1_000_000.0*frequencyScale else localMs+offsetMs
     val ageMs: Double get() = (MonotonicClock.now() - sampledAtMs).coerceAtLeast(0.0)

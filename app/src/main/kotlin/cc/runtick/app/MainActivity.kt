@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        lifecycleScope.launch { runCatching { cc.runtick.app.core.NativeTimeSync.synchronize() } }
+        lifecycleScope.launch { runCatching { cc.runtick.app.core.AppTimeSync.synchronize() } }
         // 浅色系统栏（透明背景、深色前景图标），与锁定的浅色主题一致。
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(
