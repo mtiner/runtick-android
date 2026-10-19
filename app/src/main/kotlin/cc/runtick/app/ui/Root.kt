@@ -155,7 +155,6 @@ fun RootView(model: AppModel) {
                             api = model.api,
                             user = user!!,
                             onGuide = { onboarded = false },
-                            onEditAvatar = { showAvatarPicker = true },
                             leave = {
                                 val target = model.room
                                 scope.launch {
@@ -209,7 +208,7 @@ fun RootView(model: AppModel) {
             AvatarPicker(model, user!!, onDismiss = { showAvatarPicker = false })
         }
         if (showProfileHistory && user != null && model.api != null) {
-            HistoryView(api = model.api!!, user = user!!, room = null, onBack = { showProfileHistory = false }, onEditAvatar = { showAvatarPicker = true })
+            HistoryView(api = model.api!!, user = user!!, room = null, onBack = { showProfileHistory = false })
         }
 
         if (showAbout) AboutView(onBack = { showAbout = false })

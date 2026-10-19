@@ -75,7 +75,7 @@ fun UserAvatar(filename: String?,name: String,size: Dp = 40.dp) {
     val bitmap by produceState<Bitmap?>(null,url) { value=null; if(url != null) value=AvatarImages.load(url) }
     Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(RT.aqua.copy(alpha=0.22f)).clearAndSetSemantics {},contentAlignment=Alignment.Center) {
         val image=bitmap
-        if(image != null) Image(image.asImageBitmap(),contentDescription=null,contentScale=ContentScale.Fit,modifier=Modifier.fillMaxSize().padding(size * 0.06f))
+        if(image != null) Image(image.asImageBitmap(),contentDescription=null,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxSize())
         else Text(name.take(1).uppercase(),fontSize=(size.value * 0.4f).sp,fontWeight=FontWeight.Bold,color=RT.deep)
     }
 }

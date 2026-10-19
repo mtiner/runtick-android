@@ -76,7 +76,7 @@ data class HistoryData(
  * room 非空时请求带 room 参数（房间内查看本房间成绩）。
  */
 @Composable
-fun HistoryView(api: APIClient, user: User, room: String?, onEditAvatar: (() -> Unit)? = null, onBack: () -> Unit) {
+fun HistoryView(api: APIClient, user: User, room: String?, onBack: () -> Unit) {
     androidx.activity.compose.BackHandler(onBack = onBack)
     var showSolo by remember { mutableStateOf(false) }
     if (showSolo) { SoloHistoryView(api, onBack = { showSolo = false }); return }
@@ -144,9 +144,7 @@ fun HistoryView(api: APIClient, user: User, room: String?, onEditAvatar: (() -> 
                 val current = data
                 current?.athletes?.firstOrNull { it.id == athleteId }?.let { athlete ->
                     Row(verticalAlignment=Alignment.CenterVertically) {
-                        if(athlete.id==user.id && onEditAvatar!=null) {
-                            Box(Modifier.clickable(onClick=onEditAvatar).semantics { contentDescription="修改头像" }) { UserAvatar(athlete.avatar,athlete.loginId,32.dp) }
-                        } else UserAvatar(athlete.avatar,athlete.loginId,32.dp)
+                        UserAvatar(athlete.avatar,athlete.loginId,32.dp)
                         Spacer(Modifier.size(8.dp)); Text(athlete.loginId,color=RT.ink)
                     }
                 }

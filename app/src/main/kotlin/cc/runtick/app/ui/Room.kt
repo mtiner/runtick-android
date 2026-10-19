@@ -115,7 +115,7 @@ private fun formatStageSeconds(value: Double): String =
 /** 房间视图：连接状态、校时、角色选择、发令、终点触控与成绩展示。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, onGuide: () -> Unit = {}, onEditAvatar: (() -> Unit)? = null) {
+fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, onGuide: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var soundCheck by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
@@ -225,9 +225,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         members.forEach { member ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                if(member.loginId==user.loginId && onEditAvatar!=null) {
-                                    Box(Modifier.clickable(onClick=onEditAvatar).semantics { contentDescription="修改头像" }) { UserAvatar(member.avatar,member.loginId,36.dp) }
-                                } else UserAvatar(member.avatar,member.loginId,36.dp)
+                                UserAvatar(member.avatar,member.loginId,36.dp)
                                 Spacer(Modifier.size(8.dp))
                                 Text(member.loginId, modifier = Modifier.weight(1f), fontSize = 15.sp, color = RT.ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                 Text(
@@ -323,7 +321,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
 
         // 房间内历史成绩全屏页。
         if (showHistory && api != null) {
-            HistoryView(api = api, user = user, room = model.code, onBack = { showHistory = false }, onEditAvatar = onEditAvatar)
+            HistoryView(api = api, user = user, room = model.code, onBack = { showHistory = false })
         }
 
         if (showHelp) RTGlobalHelpSheet(onDismiss = { showHelp = false }, onGuide = onGuide)
