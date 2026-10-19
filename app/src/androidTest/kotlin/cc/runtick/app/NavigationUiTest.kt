@@ -279,4 +279,19 @@ class NavigationUiTest {
         } finally { runBlocking { withContext(Dispatchers.Main) { app.clearSession(); app.close() } } }
     }
 
+    @Test fun roomShowsOneSimpleSyncStatusWithoutServerDiagnostics() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val api=APIClient(server.url("/").toString())
+        val user=User(71,"runner")
+        val room=RoomModel(context,api,user,"1234")
+        room.clock=ClockMapping(1.0,2.0,2.0,MonotonicClock.now(),server="f.m.suning.com",validSamples=8)
+        try {
+            compose.setContent { RunTickTheme { RoomView(room,api,user,leave={}) } }
+            compose.onAllNodesWithText("时间已同步").assertCountEquals(1)
+            compose.onAllNodesWithText("f.m.suning.com",substring=true).assertCountEquals(0)
+            compose.onAllNodesWithText("RTT",substring=true).assertCountEquals(0)
+            compose.onAllNodesWithText("Offset",substring=true).assertCountEquals(0)
+        } finally { room.stop() }
+    }
+
 }

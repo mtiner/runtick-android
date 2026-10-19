@@ -197,7 +197,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                 }
                 if (syncing) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("正在校准时间 $progress/${model.syncTarget}", fontSize = 12.sp, color = RT.muted)
+                        Text("正在同步时间…", fontSize = 12.sp, color = RT.muted)
                         LinearProgressIndicator(
                             progress = { progress.toFloat() / model.syncTarget },
                             modifier = Modifier.fillMaxWidth(),
@@ -205,19 +205,13 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                             trackColor = RT.aqua.copy(alpha = 0.18f)
                         )
                     }
-                } else if (clock != null) {
-                    Text(
-                        "${clock!!.server} · ${clock!!.validSamples} 样本 · RTT %.1f ms · 估计不确定度 %.0f ms".format(clock!!.avgRttMs, clock!!.estimatedUncertaintyMs),
-                        fontSize = 12.sp, lineHeight = 17.sp, color = RT.muted
-                    )
-                }
+                } else { TimeSyncStatus(model) }
                 RTButton(
                     onClick = { scope.launch { model.calibrate(force = true) } },
                     enabled = !syncing && !firing && !model.pressed
                 ) { RTButtonInkText("重新校准时间") }
             }
 
-            TimeSyncStatus(model)
             // 角色选择与成员卡：仅在无进行中的比赛时显示。
             if (race == null || (!race.isActive && race.status != "completed")) {
                 RoleSelectionCard(model, connected, busy)
@@ -577,7 +571,6 @@ private fun FinishPad(model: RoomModel, loginId: String, leave: () -> Unit) {
     val content = Color(0xFF123D3B)
     Column(Modifier.fillMaxSize().background(background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         RecordingHeader("$loginId · 房间 ${model.code}", onBack = { model.cancelPress(); leave() })
-        TimeSyncStatus(model)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val availableHeight = maxHeight.value
             val ringSize = (availableHeight * 0.25f).coerceIn(80f, 180f).dp
@@ -653,7 +646,6 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
     }
     Column(Modifier.fillMaxSize().rtBackdrop().windowInsetsPadding(WindowInsets.safeDrawing)) {
         RecordingHeader("房间 ${model.code}", onBack)
-        TimeSyncStatus(model)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp)) {
                 Spacer(Modifier.weight(1f))
@@ -694,5 +686,5 @@ private fun RecordingHeader(title: String, onBack: () -> Unit) {
 private fun TimeSyncStatus(model: RoomModel) {
     var text by remember { mutableStateOf(model.syncSummary) }
     LaunchedEffect(model) { while(true) { text=model.syncSummary; delay(1000) } }
-    Text(text,fontSize=12.sp,color=RT.muted,modifier=Modifier.padding(horizontal=16.dp))
+    Text(text,fontSize=12.sp,color=RT.muted,modifier=Modifier)
 }

@@ -109,12 +109,12 @@ fun AvatarPicker(model: AppModel,user: User,onDismiss: () -> Unit) {
             if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             if(error.isNotEmpty()) Text(error,color=MaterialTheme.colorScheme.error,fontSize=12.sp)
             if(avatars.isEmpty() && !loading) TextButton(onClick={reload++}) { Text("重新加载") }
-            LazyVerticalGrid(columns=GridCells.Adaptive(140.dp),modifier=Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(12.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+            LazyVerticalGrid(columns=GridCells.Fixed(4),modifier=Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(12.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 items(avatars,key={it.filename}) { option ->
                     Column(Modifier.clip(RoundedCornerShape(16.dp)).background(if(selected==option.filename) RT.aqua.copy(alpha=0.18f) else androidx.compose.ui.graphics.Color.Transparent)
-                        .clickable(enabled=!saving) { selected=option.filename }.semantics { contentDescription=option.title; this.selected=selected==option.filename }.padding(10.dp),
+                        .clickable(enabled=!saving) { selected=option.filename }.semantics { contentDescription=option.title; this.selected=selected==option.filename }.padding(4.dp),
                         horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        UserAvatar(option.filename,"头像",80.dp)
+                        UserAvatar(option.filename,"头像",56.dp)
                         Text(option.title,fontSize=12.sp,textAlign=TextAlign.Center,maxLines=3,overflow=TextOverflow.Ellipsis,color=RT.ink)
                         Text(if(selected==option.filename) "已选择" else "选择",fontSize=12.sp,color=RT.deep)
                     }

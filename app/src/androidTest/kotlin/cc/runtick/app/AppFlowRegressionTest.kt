@@ -118,11 +118,28 @@ class AppFlowRegressionTest {
             assertEquals(event("new"), model.pending); assertEquals(event("new"), store.load(key()))
         } finally { model.stop() }
     } }
+    @Test fun sameRoomResumeReusesFreshMappingAndRefreshesExpiredMapping() = runBlocking { main {
+        var calibrations=0
+        val model=RoomModel(context,api,User(71,"runner"),"1234",store,synchronizeTime={
+            calibrations++
+            ClockMapping(1.0,2.0,2.0,MonotonicClock.now())
+        })
+        try {
+            model.clock=ClockMapping(1.0,2.0,2.0,MonotonicClock.now())
+            repeat(3) { model.resume() }
+            yield()
+            assertEquals("Resuming an already calibrated room must reuse its mapping",0,calibrations)
+            model.clock=ClockMapping(1.0,2.0,2.0,MonotonicClock.now()-121000)
+            model.resume()
+            withTimeout(3000) { while(calibrations==0) yield() }
+            assertEquals(1,calibrations)
+        } finally { model.stop() }
+    } }
     @Test fun pendingRecordBlocksNewRoundAndFailedCalibrationKeepsError() = runBlocking { main {
         val model = RoomModel(context, api, User(71, "runner"), "1234", store, synchronizeTime = { throw IllegalStateException("NTP 校时失败：UDP 123 不可用") })
         try {
             model.pending = event("old"); model.beginRecording(); assertTrue(model.error.contains("尚未同步")); assertFalse(requests.any { it == "POST /api/rooms/1234/races" })
-            model.pending = null; model.fire(); assertTrue(model.error.contains("NTP 校时失败")); assertFalse(model.error.contains("已完成"))
+            model.pending = null; model.fire(); assertTrue(model.syncError.contains("NTP 校时失败")); assertEquals("时间同步失败，请检查网络后重试。",model.error); assertFalse(model.error.contains("已完成"))
         } finally { model.stop() }
     } }
     @Test fun incompatibleRemoteSettingsAreRejectedWithoutRequests() = runBlocking { main {

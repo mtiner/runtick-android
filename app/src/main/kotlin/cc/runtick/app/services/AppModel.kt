@@ -509,9 +509,20 @@ class RoomModel(
         started = true
         scope.launch { calibrate() }
         val manager=context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        var observedNetwork: android.net.Network? = null
+        var receivedInitialNetwork = false
         val callback=object: android.net.ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: android.net.Network) { scope.launch { needsResync = true; timeSync.invalidate(); calibrate() } }
-            override fun onLost(network: android.net.Network) { scope.launch { needsResync = true; timeSync.invalidate(); calibrate() } }
+            override fun onAvailable(network: android.net.Network) { scope.launch {
+                val changed = receivedInitialNetwork && observedNetwork != network
+                observedNetwork = network; receivedInitialNetwork = true
+                if(changed) {
+                    needsResync = true
+                    if(clock?.fresh != true && !syncing) { timeSync.invalidate(); calibrate() }
+                }
+            } }
+            override fun onLost(network: android.net.Network) { scope.launch {
+                if(observedNetwork == network) { observedNetwork = null; needsResync = true }
+            } }
         }
         networkCallback=callback
         manager.registerDefaultNetworkCallback(callback)
@@ -567,10 +578,11 @@ class RoomModel(
         _volumeWarning.value = false
     }
 
-    /** 回前台：比赛进行中则重新校时，并让 WebSocket 立刻心跳一次。 */
+    /** 回前台检查有效性；有效映射继续复用，避免同房间恢复反复校时。 */
     fun resume() {
-        needsResync = true
-        if ((race?.active != true || recordingClock == null) ) scope.launch { needsResync = true; timeSync.invalidate(); calibrate() }
+        if (clock?.fresh != true && (race?.active != true || recordingClock == null)) {
+            scope.launch { calibrate() }
+        }
         runCatching { webSocket?.send("{\"type\":\"ping\"}") }
     }
 
@@ -585,10 +597,10 @@ class RoomModel(
     private var needsResync = false
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     val syncSummary: String get() {
-        if (syncing) return "时间同步中 · $progress/$syncTarget · ${cc.runtick.app.core.AppTimeSync.detail}"
-        val value=recordingClock ?: clock ?: return "时间同步失败 · 尚无可用时间基准"
-        val state=if(!value.fresh) "同步失败 · 映射已过期或不可靠" else if(syncError.isEmpty()) { if(value.syncSource=="HTTP") "已同步 · HTTP 精度未验证" else "已同步" } else "同步质量下降"
-        return "$state · ${value.server} · 年龄 ${(value.ageMs/1000).toInt()}s · 估计不确定度 %.1fms".format(value.estimatedUncertaintyMs)
+        if (syncing) return "正在同步时间…"
+        val value=recordingClock ?: clock ?: return if(syncError.isEmpty()) "尚未同步时间" else "时间同步失败，请重试"
+        if(!value.fresh) return "时间同步已过期，请重新同步"
+        return if(syncError.isEmpty()) "时间已同步" else "时间同步质量下降，请重新同步"
     }
     private val timeSync = cc.runtick.app.core.AppTimeSync
     suspend fun calibrate(force: Boolean = false) {
@@ -598,7 +610,7 @@ class RoomModel(
         progress = 0
         error = ""
         try {
-            try { clock = synchronizeTime { progress = it }; syncError = ""; needsResync = false }
+            try { clock = synchronizeTime { progress = it; android.util.Log.d("RunTickTimeSync",cc.runtick.app.core.AppTimeSync.detail) }; syncError = ""; needsResync = false }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (!allowHTTPFallback) throw e
@@ -611,7 +623,8 @@ class RoomModel(
         } catch (e: Throwable) {
             if (clock == null) clock = timeSync.latest
             syncError = e.message ?: "校时失败"
-            error = syncError
+            android.util.Log.d("RunTickTimeSync", "Calibration failed: $syncError")
+            error = "时间同步失败，请检查网络后重试。"
         } finally {
             syncing = false
         }
