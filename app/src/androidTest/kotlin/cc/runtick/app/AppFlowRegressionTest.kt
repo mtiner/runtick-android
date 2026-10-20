@@ -135,11 +135,13 @@ class AppFlowRegressionTest {
             assertEquals(1,calibrations)
         } finally { model.stop() }
     } }
-    @Test fun pendingRecordBlocksNewRoundAndFailedCalibrationKeepsError() = runBlocking { main {
-        val model = RoomModel(context, api, User(71, "runner"), "1234", store, synchronizeTime = { throw IllegalStateException("NTP 校时失败：UDP 123 不可用") })
+    @Test fun pendingRecordBlocksNewRoundAndCalibrationFailureStaysInline() = runBlocking { main {
+        val model = RoomModel(context, api, User(71, "runner"), "1234", store, synchronizeTime = { throw IllegalStateException("HTTP 时间源不可用") })
         try {
             model.pending = event("old"); model.beginRecording(); assertTrue(model.error.contains("尚未同步")); assertFalse(requests.any { it == "POST /api/rooms/1234/races" })
-            model.pending = null; model.fire(); assertTrue(model.syncError.contains("NTP 校时失败")); assertEquals("时间同步失败，请检查网络后重试。",model.error); assertFalse(model.error.contains("已完成"))
+            val actionError = model.error
+            model.pending = null; model.fire(); assertTrue(model.syncError.contains("HTTP 时间源不可用")); assertEquals(actionError, model.error)
+            model.error = ""; model.calibrate(force = true); assertTrue(model.error.isEmpty()); assertTrue(model.syncError.isNotEmpty())
         } finally { model.stop() }
     } }
     @Test fun incompatibleRemoteSettingsAreRejectedWithoutRequests() = runBlocking { main {

@@ -61,7 +61,12 @@ class NavigationUiTest {
             }
         }
         server.start()
-        compose.activityRule.scenario.onActivity { it.enableEdgeToEdge() }
+        compose.activityRule.scenario.onActivity {
+            it.enableEdgeToEdge()
+            // Test hosts do not run MainActivity's screen-awake lifecycle.
+            it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            it.setShowWhenLocked(true); it.setTurnScreenOn(true)
+        }
     }
     @After fun cleanup() { server.shutdown() }
     private fun screenshot(name: String) {
@@ -288,7 +293,7 @@ class NavigationUiTest {
             compose.setContent { RunTickTheme { RoomView(room,api,user,leave={}) } }
             compose.onAllNodesWithText("时间已同步").assertCountEquals(1)
             compose.onAllNodesWithText("f.m.suning.com",substring=true).assertCountEquals(0)
-            compose.onAllNodesWithText("RTT",substring=true).assertCountEquals(0)
+            compose.onAllNodesWithText("平均 RTT",substring=true).assertCountEquals(1)
             compose.onAllNodesWithText("Offset",substring=true).assertCountEquals(0)
         } finally { room.stop() }
     }
