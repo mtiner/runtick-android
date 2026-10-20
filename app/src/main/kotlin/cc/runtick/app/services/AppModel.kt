@@ -588,7 +588,6 @@ class RoomModel(
         if(force) timeSync.invalidate()
         syncing = true
         progress = 0
-        error = ""
         try {
             try { clock = synchronizeTime { progress = it; _syncMetrics.value=cc.runtick.app.core.AppTimeSync.latestRTT to cc.runtick.app.core.AppTimeSync.averageRTT; android.util.Log.d("RunTickTimeSync",cc.runtick.app.core.AppTimeSync.detail) }; syncError = ""; needsResync = false }
             catch (e: CancellationException) { throw e }
@@ -604,7 +603,7 @@ class RoomModel(
             if (clock == null) clock = timeSync.latest
             syncError = e.message ?: "校时失败"
             android.util.Log.d("RunTickTimeSync", "Calibration failed: $syncError")
-            error = "时间同步失败，请检查网络后重试。"
+            // Calibration status stays inline; it must not enter the global modal error channel.
         } finally {
             syncing = false
         }
@@ -664,7 +663,8 @@ class RoomModel(
     suspend fun beginRecording() {
         if (pending != null) { error = "上一轮计时记录尚未同步，请重新同步后再开始。"; return }
         if (needsResync || clock?.fresh != true) { if (needsResync) timeSync.invalidate(); calibrate() }
-        if (!ready || !connected || role == null || roleSaving || clock?.fresh != true || syncing) {
+        if (clock?.fresh != true || syncing) return
+        if (!ready || !connected || role == null || roleSaving) {
             error = if (roleSaving) "角色正在后台同步，请稍后开始记录。" else "请等待两端就绪并完成校时，再开始记录。"
             return
         }
@@ -709,7 +709,7 @@ class RoomModel(
         if (!pass) {
             if (clock?.fresh != true) {
                 calibrate()
-                if (clock?.fresh == true) error = "时间校准已完成，请再次发令。"
+                // Successful recalibration is reflected by the inline sync status.
             }
             return
         }

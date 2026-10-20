@@ -297,14 +297,13 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                             fontSize = 14.sp, lineHeight = 20.sp, color = RT.ink
                         )
                         StageSettings(stages = stages, allowSetToggle = true, onChange = { model.stages = it })
-                        RTButton(
-                            onClick = {
-                                scope.launch { try { model.saveRoomSettings(); model.editingSettings=false; soundCheck=false } catch(e: Exception) { model.error=e.message ?: "保存设置失败" } }
-                            },
-                            secondary = false
-                        ) { RTButtonText("保存设置") }
                     }
+                    Column(Modifier.fillMaxWidth().background(RT.background).padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        RTButton(onClick = {
+                            scope.launch { try { model.saveRoomSettings(); model.editingSettings=false; soundCheck=false } catch(e: Exception) { model.error=e.message ?: "保存设置失败" } }
+                        }, secondary = false) { RTButtonText("保存设置") }
                     RTButton(onClick = { soundCheck = false; model.editingSettings=false }) { RTButtonInkText("返回准备") }
+                    }
                 }
             }
         }
@@ -692,6 +691,7 @@ private fun TimeSyncStatus(model: RoomModel) {
     val syncing by model.syncingFlow.collectAsState()
     Column(verticalArrangement=Arrangement.spacedBy(4.dp)) {
         Text(text,fontSize=12.sp,color=RT.muted)
+        if(!syncing && model.syncError.isNotEmpty()) Text("校时暂未完成，可继续调整设置。请检查网络后点击重新校准；校时有效后才能开始新一轮。",fontSize=12.sp,color=RT.muted,modifier=Modifier.testTag("room.syncNotice"))
         if(syncing) Text("此次 RTT ${metrics.first?.let { "%.1f ms".format(it) } ?: "—"} · 平均 RTT ${metrics.second?.let { "%.1f ms".format(it) } ?: "—"}",fontSize=12.sp,color=RT.muted)
         else (metrics.second ?: model.clock?.avgRttMs)?.let { Text("平均 RTT %.1f ms".format(it),fontSize=12.sp,color=RT.muted) }
     }
