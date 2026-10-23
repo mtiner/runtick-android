@@ -707,7 +707,7 @@ class RoomModel(
         val raceId = race!!.id
         firing = true
         try {
-            cue = "请保持手机与起跑器稳定…"
+            cue = "等待发令…"
             try { reactionMotion.prepare(settings[0].reactionEnabled) } catch (e: CancellationException) { throw e } catch (_: Exception) { reactionMotion.stop() }
             currentCoroutineContext().ensureActive()
             if (fireGeneration != token || stopped || race?.id != raceId || race?.active != true) return

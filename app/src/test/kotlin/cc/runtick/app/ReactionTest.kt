@@ -12,11 +12,11 @@ class ReactionTest {
         gate.arm(2000.0); assertNull(gate.movedAt)
     }
 
-    @Test fun stableBaselineRejectsTransientSpikeAndCapturesFirstSustainedMotion() {
+    @Test fun gunGateRejectsTransientSpikeAndCapturesFirstSustainedMotion() {
         val gate = MotionGate()
         gate.sample(0.0, 2.0, 1.0); assertNull(gate.movedAt)
         for (at in 100..700 step 10) gate.sample(at.toDouble(), 0.01, 0.01)
-        assertTrue(gate.ready)
+        gate.arm(700.0); assertTrue(gate.ready)
         gate.sample(710.0, 2.0, 1.0); gate.sample(720.0, 0.0, 0.0); assertNull(gate.movedAt)
         for (at in 800..840 step 10) gate.sample(at.toDouble(), 0.7, 0.5)
         assertEquals(800.0, gate.movedAt!!, 0.001)

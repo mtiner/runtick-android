@@ -646,6 +646,7 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
                 Text(cue ?: "准备发令", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = RT.ink, textAlign = TextAlign.Center)
                 deadline?.let { Text(ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 96.sp, fontWeight = FontWeight.Bold, color = RT.ink) }
                 Text(if (race?.startAt == null) "跟随口令，准备出发" else "枪声已发出 · 等待冲线", color = RT.muted, textAlign = TextAlign.Center)
+                race?.reactionStatus?.let { Text(cc.runtick.app.core.reactionText(race?.reactionMs, it) + " · 正式计时独立进行", color = RT.muted, fontSize = 12.sp) }
                 if(reactionNotice.isNotEmpty()) Text(reactionNotice, color = RT.muted, fontSize = 12.sp)
                 if (!firing && race?.startAt == null && pending == null) {
                     RTButton(onClick = { scope.launch { model.fire() } }, enabled = !syncing) { RTButtonInkText("重新发令") }

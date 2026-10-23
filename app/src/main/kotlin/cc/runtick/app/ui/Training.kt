@@ -66,7 +66,7 @@ import java.util.UUID
         if (running || stages.size != 3 || stages.any { !it.valid }) return
         if (!allowReducedVolume && AudioReadiness.volumePercent(context) < 100) { volumeWarning = true; return }
         volumeWarning = false
-        running = true; result = null; error = ""; cue = "请保持手机与起跑器稳定…"
+        running = true; result = null; error = ""; cue = "等待发令…"
         val saved = stages.map { it.copy() }; val id = UUID.randomUUID().toString()
         val token = UUID.randomUUID(); generation = token
         task = scope.launch {
