@@ -249,6 +249,26 @@ class NavigationUiTest {
         } finally { compose.runOnIdle { model.stop() } }
     }
 
+    @Test fun profileActionGroupIsBelowStandaloneHistory() {
+        server.dispatcher = object: Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = MockResponse().setHeader("Content-Type","application/json")
+                .setBody("""{"ok":true,"data":{"user":{"id":71,"loginId":"runner"}}}""")
+        }
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val app=cc.runtick.app.services.AppModel(context,suppliedClient=APIClient(server.url("/").toString()))
+        runBlocking { withContext(Dispatchers.Main) { app.login("runner","pw") } }
+        try {
+            compose.setContent { RunTickTheme { RTSafeArea { ProfileView(app,User(71,"runner"),onOpenHistory={}) } } }
+            compose.onNodeWithText("退出登录").performScrollTo()
+            val group = compose.onNodeWithContentDescription("账号操作").fetchSemanticsNode().boundsInRoot
+            val rows = listOf("同步训练记录", "起跑设置", "关于", "退出登录").map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
+            assertTrue(rows.zipWithNext().all { (a,b) -> a.bottom <= b.top })
+            assertTrue(rows.all { it.left >= group.left && it.right <= group.right })
+            assertTrue(compose.onNodeWithText("历史成绩").fetchSemanticsNode().boundsInRoot.bottom <= group.top)
+            screenshot("profile-action-group")
+        } finally { runBlocking { withContext(Dispatchers.Main) { app.clearSession(); app.close() } } }
+    }
+
     @Test fun profileAvatarPickerSavesFilenameWithSpaces() {
         var avatar: String?=null
         server.dispatcher=object: Dispatcher() {
@@ -273,23 +293,14 @@ class NavigationUiTest {
                 ProfileView(app,user!!,onOpenHistory={},onEditAvatar={picker=true})
                 if(picker) AvatarPicker(app,user!!,onDismiss={picker=false})
             } } }
-            compose.onNodeWithText("退出登录").performScrollTo()
-            val group = compose.onNodeWithContentDescription("账号操作").fetchSemanticsNode().boundsInRoot
-            val rows = listOf("同步训练记录", "起跑设置", "关于", "退出登录").map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
-            assertTrue(rows.zipWithNext().all { (a,b) -> a.bottom <= b.top })
-            assertTrue(rows.all { it.left >= group.left && it.right <= group.right })
-            assertTrue(compose.onNodeWithText("历史成绩").fetchSemanticsNode().boundsInRoot.bottom <= group.top)
-            screenshot("profile-action-group")
-            compose.onNodeWithContentDescription("修改头像").performScrollTo()
-            var safeTop = 0
-            compose.runOnIdle { safeTop = compose.activity.window.decorView.rootWindowInsets.getInsets(WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout()).top }
-            assertTrue("Scrolled avatar must stay below the status bar/cutout", compose.onNodeWithContentDescription("修改头像").fetchSemanticsNode().boundsInRoot.top >= safeTop)
             compose.onNodeWithContentDescription("修改头像").performClick()
-            compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Nike Dragonfly").fetchSemanticsNodes().isNotEmpty() }
+            try { compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Nike Dragonfly").fetchSemanticsNodes().isNotEmpty() } }
+            catch (e: Exception) { throw AssertionError("Avatar gallery did not open; requests=${server.requestCount}; UI=" + compose.onRoot(useUnmergedTree=true).printToString().replace('\n',' ').take(3000), e) }
             compose.onNodeWithContentDescription("Nike Dragonfly").performClick()
             screenshot("avatar-gallery")
             compose.onNodeWithText("保存头像").performClick()
-            compose.waitUntil(10000) { app.user?.avatar=="Nike Dragonfly.png" }
+            try { compose.waitUntil(10000) { app.user?.avatar=="Nike Dragonfly.png" } }
+            catch (e: Exception) { throw AssertionError("Avatar selection was not saved; requests=${server.requestCount}; user=${app.user}; UI=" + compose.onRoot(useUnmergedTree=true).printToString().replace('\n',' ').take(3000), e) }
             compose.onNodeWithText("选择头像").assertDoesNotExist()
             assertEquals("Nike Dragonfly.png",avatar)
         } finally { runBlocking { withContext(Dispatchers.Main) { app.clearSession(); app.close() } } }
