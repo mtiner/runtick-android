@@ -273,7 +273,14 @@ class NavigationUiTest {
                 ProfileView(app,user!!,onOpenHistory={},onEditAvatar={picker=true})
                 if(picker) AvatarPicker(app,user!!,onDismiss={picker=false})
             } }
-            compose.onNodeWithContentDescription("修改头像").performClick()
+            compose.onNodeWithText("退出登录").performScrollTo()
+            val group = compose.onNodeWithContentDescription("账号操作").fetchSemanticsNode().boundsInRoot
+            val rows = listOf("同步训练记录", "起跑设置", "关于", "退出登录").map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
+            assertTrue(rows.zipWithNext().all { (a,b) -> a.bottom <= b.top })
+            assertTrue(rows.all { it.left >= group.left && it.right <= group.right })
+            assertTrue(compose.onNodeWithText("历史成绩").fetchSemanticsNode().boundsInRoot.bottom <= group.top)
+            screenshot("profile-action-group")
+            compose.onNodeWithContentDescription("修改头像").performScrollTo().performClick()
             compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Nike Dragonfly").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Nike Dragonfly").performClick()
             screenshot("avatar-gallery")

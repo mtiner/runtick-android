@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,6 +27,12 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.House
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.DirectionsRun
 import androidx.compose.material3.CircularProgressIndicator
@@ -469,7 +476,6 @@ fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout:
                 Text("● 已登录", fontSize = 12.sp, color = RT.deep)
             }
         }
-        RTButton(onClick = { showStarterSettings = true }) { RTButtonInkText("起跑设置") }
         RTButton(onClick = onOpenHistory, modifier = Modifier.rtEntrance(120)) {
             Icon(Icons.Filled.BarChart, contentDescription = null, tint = RT.ink, modifier = Modifier.size(20.dp))
             Spacer(Modifier.size(8.dp))
@@ -477,19 +483,27 @@ fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout:
             Spacer(Modifier.weight(1f))
             Icon(Icons.AutoMirrored.Filled.ArrowRight, contentDescription = null, tint = RT.ink, modifier = Modifier.size(18.dp))
         }
+        RTCard(modifier = Modifier.rtEntrance(160)) {
+            Column(verticalArrangement = Arrangement.spacedBy(0.dp), modifier = Modifier.semantics { contentDescription = "账号操作" }) {
+                ProfileActionRow(if(syncingRecords) "正在同步…" else "同步训练记录", Icons.Filled.Sync, enabled = !syncingRecords) { model.scheduleSync(showConfirmation = true) }
+                androidx.compose.material3.HorizontalDivider(color = RT.ink.copy(alpha = 0.08f))
+                ProfileActionRow("起跑设置", Icons.Filled.Tune, navigates = true) { showStarterSettings = true }
+                androidx.compose.material3.HorizontalDivider(color = RT.ink.copy(alpha = 0.08f))
+                ProfileActionRow("关于", Icons.Filled.Info, navigates = true, onClick = onAbout)
+                androidx.compose.material3.HorizontalDivider(color = RT.ink.copy(alpha = 0.08f))
+                ProfileActionRow("退出登录", Icons.Filled.Power, enabled = !loading) { scope.launch { model.perform { model.logout() } } }
+            }
+        }
         if (syncNotice.isNotEmpty()) RTCard(title = "训练记录同步") { Text(syncNotice, color = RT.muted) }
-        RTButton(onClick = { model.scheduleSync(showConfirmation = true) }, enabled = !syncingRecords) {
-            RTButtonInkText(if (syncingRecords) "正在同步…" else "同步本机训练记录")
-        }
-        RTButton(onClick = onAbout) { RTButtonInkText("关于 RunTick") }
-        RTButton(
-            onClick = { scope.launch { model.perform { model.logout() } } },
-            enabled = !loading,
-            modifier = Modifier.rtEntrance(160)
-        ) {
-            Icon(Icons.Filled.Power, contentDescription = null, tint = RT.ink, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.size(8.dp))
-            RTButtonInkText("退出登录")
-        }
+    }
+}
+
+
+@Composable private fun ProfileActionRow(title: String, icon: ImageVector, enabled: Boolean = true, navigates: Boolean = false, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = if(enabled) RT.ink else RT.muted, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.size(12.dp))
+        Text(title, modifier = Modifier.weight(1f), color = if(enabled) RT.ink else RT.muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        if(navigates) Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = RT.muted, modifier = Modifier.size(18.dp))
     }
 }
