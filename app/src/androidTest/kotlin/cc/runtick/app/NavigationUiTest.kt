@@ -267,12 +267,12 @@ class NavigationUiTest {
         val app=cc.runtick.app.services.AppModel(context,suppliedClient=APIClient(server.url("/").toString()))
         runBlocking { withContext(Dispatchers.Main) { app.login("runner","pw") } }
         try {
-            compose.setContent { RunTickTheme {
+            compose.setContent { RunTickTheme { RTSafeArea {
                 val user by app.userFlow.collectAsState()
                 var picker by remember { mutableStateOf(false) }
                 ProfileView(app,user!!,onOpenHistory={},onEditAvatar={picker=true})
                 if(picker) AvatarPicker(app,user!!,onDismiss={picker=false})
-            } }
+            } } }
             compose.onNodeWithText("退出登录").performScrollTo()
             val group = compose.onNodeWithContentDescription("账号操作").fetchSemanticsNode().boundsInRoot
             val rows = listOf("同步训练记录", "起跑设置", "关于", "退出登录").map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
@@ -280,7 +280,11 @@ class NavigationUiTest {
             assertTrue(rows.all { it.left >= group.left && it.right <= group.right })
             assertTrue(compose.onNodeWithText("历史成绩").fetchSemanticsNode().boundsInRoot.bottom <= group.top)
             screenshot("profile-action-group")
-            compose.onNodeWithContentDescription("修改头像").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("修改头像").performScrollTo()
+            var safeTop = 0
+            compose.runOnIdle { safeTop = compose.activity.window.decorView.rootWindowInsets.getInsets(WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout()).top }
+            assertTrue("Scrolled avatar must stay below the status bar/cutout", compose.onNodeWithContentDescription("修改头像").fetchSemanticsNode().boundsInRoot.top >= safeTop)
+            compose.onNodeWithContentDescription("修改头像").performClick()
             compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Nike Dragonfly").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Nike Dragonfly").performClick()
             screenshot("avatar-gallery")
