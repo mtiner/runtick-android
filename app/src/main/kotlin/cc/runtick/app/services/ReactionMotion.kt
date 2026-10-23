@@ -23,24 +23,26 @@ class ReactionMotion(context: Context) : SensorEventListener {
         if (!enabled) { preflight = "disabled"; return }
         val acceleration = manager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION) ?: return
         val rotation = manager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return
-        if (!manager.registerListener(this, rotation, 10000) || !manager.registerListener(this, acceleration, 10000)) { stop(); return }
-        delay(2200)
-        preflight = if (!received) "unavailable" else if (gate.ready && gate.movedAt == null) "ready" else "unstable"
+        try {
+            if (!manager.registerListener(this, rotation, 10000) || !manager.registerListener(this, acceleration, 10000)) { stop(); return }
+        } catch (_: Exception) { stop(); return }
+        preflight = "ready"
     }
     override fun onSensorChanged(event: SensorEvent) {
         val magnitude = sqrt(event.values.take(3).sumOf { it.toDouble() * it.toDouble() })
         if (event.sensor.type == Sensor.TYPE_GYROSCOPE) { gyro = magnitude; gyroAt = event.timestamp; return }
         if (gyroAt == 0L || event.timestamp - gyroAt > 200_000_000L) return
         received = true
+        if (gunAt == null) return
         val at = MonotonicClock.now() + (event.timestamp - SystemClock.elapsedRealtimeNanos()) / 1_000_000.0
         gate.sample(at, magnitude, gyro); report()
     }
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     fun gun(at: Double, action: (ReactionResult) -> Unit) {
-        gunAt = at; callback = action
+        gate.arm(at); gunAt = at; callback = action
         if (preflight != "ready") { complete(ReactionResult(null, preflight)); return }
         report()
-        if (callback != null) timeout = scope.launch { delay(30000); complete(ReactionResult(null, "timeout")) }
+        if (callback != null) timeout = scope.launch { delay(30000); complete(ReactionResult(null, if (received) "timeout" else "unavailable")) }
     }
     private fun report() {
         val gun = gunAt ?: return; val move = gate.movedAt ?: return

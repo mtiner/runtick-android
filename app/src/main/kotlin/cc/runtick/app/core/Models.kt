@@ -265,3 +265,5 @@ fun decodeHistoryRecord(data: JsonElement): HistoryRecord = decodeOrThrow {
 fun decodeClock(data: JsonElement): ClockResponse = decodeOrThrow {
     AppJson.decodeFromJsonElement(ClockResponse.serializer(), data)
 }
+
+@Serializable data class StarterSettingsResponse(val starterSettings: List<StageDelay>)

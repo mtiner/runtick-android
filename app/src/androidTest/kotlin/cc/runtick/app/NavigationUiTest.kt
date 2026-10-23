@@ -139,6 +139,7 @@ class NavigationUiTest {
         try {
             compose.setContent { RunTickTheme { RTSafeArea { RoomView(model, api, User(1, "test"), leave = {}) } } }
             compose.onNodeWithText("开始记录").performScrollTo().performClick()
+            compose.onNodeWithText("播放并开始").performClick()
             compose.waitUntil(10000) { model.race?.active == true }
             compose.waitUntil(10000) {
                 runCatching { compose.onNodeWithText("按住屏幕，等待冲线").assertIsDisplayed(); true }.getOrDefault(false)

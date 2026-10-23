@@ -28,17 +28,13 @@ import java.util.UUID
         Text("检测起跑反应时", modifier = Modifier.weight(1f), color = RT.ink)
         Switch(checked = stages[0].reactionEnabled, onCheckedChange = { update(0, stages[0].copy(reactionEnabled = it)) }, enabled = !disabled)
     }
-    Text("有起跑器并固定手机后开启；三点式起跑可关闭，不影响发令或跑步成绩。", fontSize = 12.sp, color = RT.muted)
-    Row {
-        Text("播放各就位口令", modifier = Modifier.weight(1f), color = RT.ink)
-        Switch(checked = stages[0].enabled, onCheckedChange = { update(0, stages[0].copy(enabled = it)) }, enabled = !disabled)
-    }
+    Text("仅检测枪声后的手机移动；各就各位和预备期间可以移动。检测失败不影响正式计时。", fontSize = 12.sp, color = RT.muted)
     if(allowSetToggle) Row {
         Text("播放预备口令",modifier=Modifier.weight(1f),color=RT.ink)
         Switch(checked=stages[1].enabled,onCheckedChange={update(1,stages[1].copy(enabled=it))},enabled=!disabled)
     }
     stages.forEachIndexed { index, stage ->
-        if (index==2 || stage.enabled) {
+        if (index!=1 || stage.enabled) {
             val title = listOf("开始 → 各就位", if (stages[0].enabled) "各就位结束 → 预备" else "开始 → 预备", if(stages[1].enabled) "预备结束 → 枪声" else if(stages[0].enabled) "各就位结束 → 枪声" else "开始 → 枪声")[index]
             Text(title, color = RT.ink)
             Row { Text("随机等待", modifier = Modifier.weight(1f), color = RT.muted)
@@ -53,8 +49,8 @@ import java.util.UUID
 @Composable fun SoloStartView(api: APIClient, user: User) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val prefs = remember { context.getSharedPreferences("runtick.room", Context.MODE_PRIVATE) }
-    var stages by remember { mutableStateOf(runCatching { AppJson.decodeFromString(ListSerializer(StageDelay.serializer()), prefs.getString("starter", "")!!) }.getOrNull()?.takeIf { it.size == 3 } ?.map { it.normalized() } ?: StageDelay.defaults()) }
+    var stages by remember(user.id) { mutableStateOf(StageDelay.defaults()) }
+    var confirmCue by remember { mutableStateOf(false) }; var loadingSettings by remember { mutableStateOf(false) }
     var running by remember { mutableStateOf(false) }; var cue by remember { mutableStateOf("") }
     var generation by remember { mutableStateOf(UUID.randomUUID()) }
     var deadline by remember { mutableStateOf<Double?>(null) }
@@ -73,10 +69,9 @@ import java.util.UUID
         running = true; result = null; error = ""; cue = "请保持手机与起跑器稳定…"
         val saved = stages.map { it.copy() }; val id = UUID.randomUUID().toString()
         val token = UUID.randomUUID(); generation = token
-        prefs.edit().putString("starter", AppJson.encodeToString(ListSerializer(StageDelay.serializer()), saved)).apply()
         task = scope.launch {
             try {
-                motion.prepare(saved[0].reactionEnabled)
+                try { motion.prepare(saved[0].reactionEnabled) } catch (e: CancellationException) { throw e } catch (_: Exception) { motion.stop() }
                 ensureActive()
                 if (generation != token) return@launch
                 val (at, _) = audio.fire(MonotonicClock.now(), saved,
@@ -113,10 +108,15 @@ import java.util.UUID
         RTBrand(); RTHero(badge = "单人训练", title = "起跑发令", subtitle = "为每一次认真训练而生")
         RTCard(title = if (running) "正在发令" else "发令设置") {
             if (!running) {
-                StageSettings(stages, onChange = { stages = it })
+                Text("秒数使用“我的—起跑设置”。枪声前可调整手机，检测失败不影响发令。", color = RT.muted)
                 Text("手机贴靠或固定在起跑器上并保持稳定。反应时为设备运动估算，非专业起跑器计时；小于 100 ms 标注抢跑。", fontSize = 12.sp, color = RT.muted)
                 AudioPreparationCard()
-                RTButton(onClick = { start() }, secondary = false) { RTButtonText("确认设置，开始发令") }
+                RTButton(onClick = { scope.launch {
+                    loadingSettings = true
+                    try { stages = loadStarterSettings(api); confirmCue = true }
+                    catch(e: Exception) { error = e.message ?: "起跑设置读取失败" }
+                    finally { loadingSettings = false }
+                } }, secondary = false, enabled = !loadingSettings) { RTButtonText("开始发令") }
             } else {
                 Text(cue, fontSize = 34.sp, color = RT.ink)
                 deadline?.let { Text(kotlin.math.ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 86.sp, color = RT.ink) }
@@ -127,6 +127,11 @@ import java.util.UUID
         RTButton(onClick = { showHistory = true }) { RTButtonInkText("单人起跑记录") }
         RTButton(onClick = { scope.launch { TrainingSync.retry(context, api, user.id) } }) { RTButtonInkText("重试同步本机记录") }
     }
+    if (confirmCue) AlertDialog(
+        onDismissRequest = { confirmCue = false }, title = { Text("本轮播放“各就各位”？") },
+        confirmButton = { TextButton(onClick = { confirmCue = false; stages = stages.toMutableList().also { it[0] = it[0].copy(enabled = true) }; start() }) { Text("播放并开始") } },
+        dismissButton = { TextButton(onClick = { confirmCue = false; stages = stages.toMutableList().also { it[0] = it[0].copy(enabled = false) }; start() }) { Text("跳过并开始") } }
+    )
     if (volumeWarning) AlertDialog(
         onDismissRequest = { volumeWarning = false },
         title = { Text("媒体音量未调至最大") },
@@ -188,4 +193,37 @@ import java.util.UUID
         }
     }
     RTErrorAlert(error, enabled = true)
+}
+
+
+suspend fun loadStarterSettings(api: APIClient): List<StageDelay> = api.request("/api/auth/starter-settings") {
+    AppJson.decodeFromJsonElement(StarterSettingsResponse.serializer(), it).starterSettings
+}
+@Composable fun UserStarterSettingsView(api: APIClient, onBack: () -> Unit) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    val scope = rememberCoroutineScope()
+    var stages by remember { mutableStateOf(StageDelay.defaults()) }
+    var loading by remember { mutableStateOf(true) }; var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }; var saved by remember { mutableStateOf(false) }
+    suspend fun load() { error = ""; try { stages = loadStarterSettings(api); loading = false } catch(e: Exception) { error = e.message ?: "读取失败" } }
+    LaunchedEffect(api) { load() }
+    RTPage {
+        RTButton(onClick = onBack) { RTButtonInkText("返回我的") }
+        RTHero(badge = "个人偏好", title = "起跑设置", subtitle = "保存到当前账号；担任起点时用于新一轮发令。")
+        RTCard(title = "发令时间") {
+            StageSettings(stages, disabled = loading || saving, allowSetToggle = true, onChange = { stages = it })
+            Text("是否播放各就各位在每次开始时选择；跳过时也跳过该段等待。修改仅对新一轮生效。", color = RT.muted)
+        }
+        if (loading) CircularProgressIndicator()
+        RTButton(onClick = { scope.launch {
+            saving = true; saved = false; error = ""
+            try {
+                stages = api.request("/api/auth/starter-settings", "PUT", buildJsonObject { put("starterSettings", AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()), stages)) }) {
+                    AppJson.decodeFromJsonElement(StarterSettingsResponse.serializer(), it).starterSettings
+                }; saved = true
+            } catch(e: Exception) { error = e.message ?: "保存失败" } finally { saving = false }
+        } }, enabled = !loading && !saving, secondary = false) { RTButtonText(if(saving) "正在保存…" else "保存设置") }
+        if (saved) Text("起跑设置已保存到账号", color = RT.deep)
+        if (error.isNotEmpty()) { Text(error, color = RT.ink); if(loading) RTButton(onClick = { scope.launch { load() } }) { RTButtonInkText("重新加载") } }
+    }
 }

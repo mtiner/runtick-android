@@ -401,6 +401,8 @@ class RoomModel(
         set(value) { _firing.value = value }
     val firingFlow: StateFlow<Boolean> get() = _firing
 
+    private val _reactionNotice = MutableStateFlow("")
+    val reactionNoticeFlow: StateFlow<String> get() = _reactionNotice
     private val _cue = MutableStateFlow<String?>(null)
     var cue: String?
         get() = _cue.value
@@ -436,21 +438,11 @@ class RoomModel(
         get() = _stages.value
         set(value) {
             _stages.value = value.map { it.normalized() }
-            if (value.size == 3 && value.all { it.valid }) {
-                prefs.edit()
-                    .putString("starter", AppJson.encodeToString(ListSerializer(StageDelay.serializer()), value))
-                    .apply()
-            }
+
         }
     val stagesFlow: StateFlow<List<StageDelay>> get() = _stages
 
     init {
-        val saved = prefs.getString("starter", null)?.let { raw ->
-            runCatching { AppJson.decodeFromString(ListSerializer(StageDelay.serializer()), raw) }.getOrNull()
-        }
-        if (saved != null && saved.size == 3) {
-            _stages.value = saved.map { it.normalized() }
-        }
         pending = pendingStore.load(pendingKey)
     }
 
@@ -649,18 +641,13 @@ class RoomModel(
         }
     }
 
-    suspend fun saveRoomSettings() {
-        api.request("/api/rooms/$code/settings","PUT",buildJsonObject {
-            put("starterSettings",AppJson.encodeToJsonElement(ListSerializer(StageDelay.serializer()),stages))
-        }) { }
-    }
     fun stageText(now: Double = MonotonicClock.now()): String {
         if(race?.startAt!=null) return "计时中"
         val mapping=recordingClock ?: clock ?: return "等待发令"
         val point=race?.cueTimeline?.lastOrNull { it.at<=mapping.utcAt(now) } ?: return "等待发令"
         return listOf("各就各位","预备","枪声")[point.stage.coerceIn(0,2)]
     }
-    suspend fun beginRecording() {
+    suspend fun beginRecording(playSet: Boolean = true) {
         if (pending != null) { error = "上一轮计时记录尚未同步，请重新同步后再开始。"; return }
         if (needsResync || clock?.fresh != true) { if (needsResync) timeSync.invalidate(); calibrate() }
         if (clock?.fresh != true || syncing) return
@@ -668,7 +655,7 @@ class RoomModel(
             error = if (roleSaving) "角色正在后台同步，请稍后开始记录。" else "请等待两端就绪并完成校时，再开始记录。"
             return
         }
-        raceAction()
+        raceAction(playSet = playSet)
     }
 
     suspend fun autoFire() {
@@ -678,17 +665,18 @@ class RoomModel(
         if (settings.size != 3 || settings.any { !it.valid }) { error = incompatiblePlan; return }
         if (clock?.fresh != true) calibrate()
         if (clock?.fresh != true) return
+        _reactionNotice.value = ""
         attemptedAutoStart = current.id
         stages = settings
         fire()
     }
 
     /** 开始新比赛（action=start）或进入下一轮（action=next）。 */
-    suspend fun raceAction(action: String = "start") = withBusy {
+    suspend fun raceAction(action: String = "start", playSet: Boolean = true) = withBusy {
         val currentRace = race
         val path = if (action == "start") "/api/rooms/$code/races"
         else "/api/rooms/$code/races/${currentRace?.id ?: throw ClientError(0, null, "当前没有比赛")}/$action"
-        val body: JsonObject? = null
+        val body: JsonObject? = if(action == "start") buildJsonObject { put("playSet", playSet) } else null
         val data = api.request(path, "POST", body) { decodeRace(it) }
         if (action == "start" && data?.starterSettings == null) throw ClientError(0, null, "发令设置暂时未能同步，请返回房间重试。")
         data?.let { update(it) }
@@ -720,7 +708,7 @@ class RoomModel(
         firing = true
         try {
             cue = "请保持手机与起跑器稳定…"
-            reactionMotion.prepare(settings[0].reactionEnabled)
+            try { reactionMotion.prepare(settings[0].reactionEnabled) } catch (e: CancellationException) { throw e } catch (_: Exception) { reactionMotion.stop() }
             currentCoroutineContext().ensureActive()
             if (fireGeneration != token || stopped || race?.id != raceId || race?.active != true) return
             val clicked = MonotonicClock.now()
@@ -735,7 +723,7 @@ class RoomModel(
                 scope.launch {
                     try { TrainingSync.send(context, api, user.id, path, body, raceId) }
                     catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { error = "反应时尚未同步，已保留在此设备上。请联网后重试。" }
+                    catch (e: Exception) { _reactionNotice.value = "反应时暂未同步，已保留在本机；正式计时不受影响。" }
                 }
             }
         } catch (e: CancellationException) {

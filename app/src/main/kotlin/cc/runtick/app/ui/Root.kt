@@ -440,6 +440,8 @@ fun GuideView(
 fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout: () -> Unit = {}, onHelp: () -> Unit = {}, onEditAvatar: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val loading by model.loadingFlow.collectAsState()
+    var showStarterSettings by remember(user.id) { mutableStateOf(false) }
+    if(showStarterSettings) { model.api?.let { UserStarterSettingsView(it) { showStarterSettings = false } }; return }
 
     val syncNotice by model.syncNoticeFlow.collectAsState()
     val syncingRecords by model.syncingRecordsFlow.collectAsState()
@@ -467,6 +469,7 @@ fun ProfileView(model: AppModel, user: User, onOpenHistory: () -> Unit, onAbout:
                 Text("● 已登录", fontSize = 12.sp, color = RT.deep)
             }
         }
+        RTButton(onClick = { showStarterSettings = true }) { RTButtonInkText("起跑设置") }
         RTButton(onClick = onOpenHistory, modifier = Modifier.rtEntrance(120)) {
             Icon(Icons.Filled.BarChart, contentDescription = null, tint = RT.ink, modifier = Modifier.size(20.dp))
             Spacer(Modifier.size(8.dp))

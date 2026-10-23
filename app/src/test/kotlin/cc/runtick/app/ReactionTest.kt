@@ -3,6 +3,15 @@ import cc.runtick.app.core.*
 import org.junit.Assert.*
 import org.junit.Test
 class ReactionTest {
+    @Test fun gunArmsWithoutQuietBaselineAndIgnoresPreGunSamples() {
+        val gate = MotionGate()
+        for(at in 0..990 step 10) gate.sample(at.toDouble(),3.0,2.0)
+        gate.arm(1000.0); gate.sample(990.0,3.0,2.0); assertNull(gate.movedAt)
+        for(at in 1010..1040 step 10) gate.sample(at.toDouble(),3.0,2.0)
+        assertEquals(1010.0,gate.movedAt!!,0.001)
+        gate.arm(2000.0); assertNull(gate.movedAt)
+    }
+
     @Test fun stableBaselineRejectsTransientSpikeAndCapturesFirstSustainedMotion() {
         val gate = MotionGate()
         gate.sample(0.0, 2.0, 1.0); assertNull(gate.movedAt)

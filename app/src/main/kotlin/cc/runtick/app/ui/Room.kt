@@ -136,6 +136,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
     val busy by model.busyFlow.collectAsState()
     val firing by model.firingFlow.collectAsState()
     val cue by model.cueFlow.collectAsState()
+    val reactionNotice by model.reactionNoticeFlow.collectAsState()
     val pending by model.pendingFlow.collectAsState()
     val submitting by model.submittingFlow.collectAsState()
     val stages by model.stagesFlow.collectAsState()
@@ -250,7 +251,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
             // 任一端确认设置后进入同一轮记录。
             if (role != null && (race == null || (!race.isActive && race.status != "completed"))) {
                 RTButton(
-                    onClick = { scope.launch { model.beginRecording() } },
+                    onClick = { soundCheck = true },
                     secondary = false,
                     enabled = ready && connected && clock != null && !syncing && !busy
                 ) { RTButtonText("开始记录") }
@@ -260,7 +261,7 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
                 RTButton(onClick = { dismissedRecording = null }) { RTButtonInkText("进入记录页") }
             }
 
-            if(race?.isActive!=true) RTButton(onClick={model.editingSettings=true;soundCheck=true}) { RTButtonInkText("房间发令设置") }
+            if(race?.isActive!=true) Text("秒数使用起点用户在“我的—起跑设置”中的配置。", color = RT.muted, fontSize = 12.sp)
             // 待提交时间戳。
             pending?.let { current ->
                 RTCard(title = "计时记录待同步") {
@@ -284,29 +285,13 @@ fun RoomView(model: RoomModel, api: APIClient?, user: User, leave: () -> Unit, o
             RTButton(onClick = { requestExit() }) { RTButtonInkText("退出房间") }
         }
 
-        // 声音确认弹层。
-        if (soundCheck) {
-            ModalBottomSheet(
-                onDismissRequest = { soundCheck = false; model.editingSettings=false },
-                containerColor = RT.background
-            ) {
-                RTPage {
-                    RTCard(title = "发令设置") {
-                        Text(
-                            "设置将用于房间内后续每轮训练。请调高媒体音量，使用手机扬声器。",
-                            fontSize = 14.sp, lineHeight = 20.sp, color = RT.ink
-                        )
-                        StageSettings(stages = stages, allowSetToggle = true, onChange = { model.stages = it })
-                    }
-                    Column(Modifier.fillMaxWidth().background(RT.background).padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        RTButton(onClick = {
-                            scope.launch { try { model.saveRoomSettings(); model.editingSettings=false; soundCheck=false } catch(e: Exception) { model.error=e.message ?: "保存设置失败" } }
-                        }, secondary = false) { RTButtonText("保存设置") }
-                    RTButton(onClick = { soundCheck = false; model.editingSettings=false }) { RTButtonInkText("返回准备") }
-                    }
-                }
-            }
-        }
+        if (soundCheck) androidx.compose.material3.AlertDialog(
+            onDismissRequest = { soundCheck = false },
+            title = { Text("本轮播放“各就各位”？") },
+            text = { Text("秒数使用起点用户的起跑设置。反应检测仅从枪声开始，不影响正式计时。") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { soundCheck = false; scope.launch { model.beginRecording(playSet = true) } }) { Text("播放并开始") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { soundCheck = false; scope.launch { model.beginRecording(playSet = false) } }) { Text("跳过并开始") } }
+        )
 
         // 终点触控全屏。
         if (showFinish || startVisible) {
@@ -642,6 +627,7 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
     val pending by model.pendingFlow.collectAsState()
     val race by model.raceFlow.collectAsState()
     val cue by model.cueFlow.collectAsState()
+    val reactionNotice by model.reactionNoticeFlow.collectAsState()
     val deadline by model.cueDeadlineFlow.collectAsState()
     var now by remember { mutableStateOf(MonotonicClock.now()) }
     val lifecycle = LocalLifecycleOwner.current
@@ -660,6 +646,7 @@ private fun StarterPad(model: RoomModel, onBack: () -> Unit) {
                 Text(cue ?: "准备发令", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = RT.ink, textAlign = TextAlign.Center)
                 deadline?.let { Text(ceil(((it - now) / 1000).coerceAtLeast(0.0)).toInt().toString(), fontSize = 96.sp, fontWeight = FontWeight.Bold, color = RT.ink) }
                 Text(if (race?.startAt == null) "跟随口令，准备出发" else "枪声已发出 · 等待冲线", color = RT.muted, textAlign = TextAlign.Center)
+                if(reactionNotice.isNotEmpty()) Text(reactionNotice, color = RT.muted, fontSize = 12.sp)
                 if (!firing && race?.startAt == null && pending == null) {
                     RTButton(onClick = { scope.launch { model.fire() } }, enabled = !syncing) { RTButtonInkText("重新发令") }
                 }

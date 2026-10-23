@@ -15,9 +15,12 @@ class MotionGate {
     var ready = false; private set
     var movedAt: Double? = null; private set
     private var quiet: Double? = null
+    private var armedAt: Double? = null
+    fun arm(at: Double) { ready = true; movedAt = null; quiet = null; candidate = null; armedAt = at }
     private var candidate: Double? = null
     fun sample(at: Double, acceleration: Double, rotation: Double) {
         if (!at.isFinite() || !acceleration.isFinite() || !rotation.isFinite()) return
+        if (armedAt != null && at < armedAt!!) return
         if (!ready) {
             if (acceleration < 0.18 && rotation < 0.12) { if (quiet == null) quiet = at; ready = at - quiet!! >= 500 }
             else quiet = null
