@@ -19,7 +19,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.test.espresso.Espresso.pressBack
 import androidx.test.platform.app.InstrumentationRegistry
 import cc.runtick.app.core.*
 import cc.runtick.app.network.APIClient
@@ -69,6 +68,12 @@ class NavigationUiTest {
         }
     }
     @After fun cleanup() { server.shutdown() }
+    private fun pressSystemBack() {
+        // Send the actual key to the focused app/dialog window. Espresso's root picker
+        // can select the underlying, unfocused activity on Android 15.
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+    }
     private fun screenshot(name: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         // UTP uninstalls the tested APK, so external app files are removed after tests.
@@ -95,7 +100,7 @@ class NavigationUiTest {
         compose.runOnIdle { safeTop = compose.activity.window.decorView.rootWindowInsets.getInsets(WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout()).top }
         assertTrue("Brand must be below status bar/cutout", top >= safeTop)
         screenshot("about-cutout")
-        pressBack()
+        pressSystemBack()
         compose.onNodeWithText("返回完成").assertIsDisplayed()
     }
     @Test fun historyBackReturnsOneLevelAtATime() {
@@ -107,9 +112,9 @@ class NavigationUiTest {
         compose.onNodeWithText("单人起跑记录").performScrollTo().performClick()
         compose.onNodeWithText("单人起跑记录").assertIsDisplayed()
         screenshot("solo-history-cutout")
-        pressBack()
+        pressSystemBack()
         compose.onAllNodesWithText("历史成绩").onFirst().assertIsDisplayed()
-        pressBack()
+        pressSystemBack()
         compose.onNodeWithText("我的页面").assertIsDisplayed()
     }
     @Test fun intervalSlidersOnlySaveWholeSecondsUpToTen() {
@@ -145,7 +150,7 @@ class NavigationUiTest {
                 runCatching { compose.onNodeWithText("按住屏幕，等待冲线").assertIsDisplayed(); true }.getOrDefault(false)
             }
             screenshot("finish-recording-cutout")
-            pressBack()
+            pressSystemBack()
             compose.onNodeWithText("按住屏幕，等待冲线").assertDoesNotExist()
             compose.onNodeWithText("进入记录页").performScrollTo().performClick()
             compose.onNodeWithText("按住屏幕，等待冲线").assertIsDisplayed()
