@@ -109,7 +109,7 @@ import java.util.UUID
         RTCard(title = if (running) "正在发令" else "发令设置") {
             if (!running) {
                 Text("秒数使用“我的—起跑设置”。枪声前可调整手机，检测失败不影响发令。", color = RT.muted)
-                Text("手机贴靠或固定在起跑器上并保持稳定。反应时为设备运动估算，非专业起跑器计时；小于 100 ms 标注抢跑。", fontSize = 12.sp, color = RT.muted)
+                Text("枪声前可以调整手机，仅检测枪声后的移动。反应时为设备运动估算，非专业起跑器计时；小于 100 ms 标注抢跑。", fontSize = 12.sp, color = RT.muted)
                 AudioPreparationCard()
                 RTButton(onClick = { scope.launch {
                     loadingSettings = true
@@ -150,7 +150,7 @@ import java.util.UUID
         RTCard(title = "让每一次出发，有迹可循") {
             Text("双端短跑计时、单人原声发令、起跑反应检测与训练成绩管理。", color = RT.ink)
             Text("反应时如何测量", color = RT.ink)
-            Text("将起点手机贴靠或固定在起跑器上并保持稳定，使用加速度计、陀螺仪与本机音频时钟计算枪声到检测到手机移动的时间差。", color = RT.ink)
+            Text("枪声前可以移动手机；仅在枪声后使用加速度计、陀螺仪与本机音频时钟计算枪声到检测到手机移动的时间差。", color = RT.ink)
             Text("小于 100 ms 标注抢跑；这是设备运动检测估算，受安装方式、采样率、扬声器振动及系统音频延迟影响，不能替代专业起跑器或用于正式比赛判罚。", color = RT.muted)
             Text("数据与权限", color = RT.ink)
             Text("运动采样仅在本机处理，服务器只保存时间差、检测状态及发令设置。未检测到移动不会记作零。单人模式不需要另一台手机；联网登录后同步记录。", color = RT.muted)
